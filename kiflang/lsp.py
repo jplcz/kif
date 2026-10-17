@@ -51,7 +51,7 @@ ATTRIBUTES = sorted(
     "align allocates atomic_callback atomic_entry atomic_exempt atomic_lock atomic_only atomic_scope atomic_token caller_location "
     "checked copy count cxx_name derive enter_atomic ensures export extends flags foreign forward_args format header heap inline "
     "kobj lang leave_atomic len_ge link_name len_of lt_len might_sleep no_prefix non_empty non_null operator ops per_cpu preserves provided repr safe self send small_stack "
-    "some stack sync target tls trace typedef unchecked_form track_caller unsafe version visibility when zeroable".split()
+    "some stack sync target tainted tainted_result tls trace trusted typedef unchecked_form track_caller unsafe untaint version visibility when zeroable".split()
 )
 
 _KIND = {"struct": SK_STRUCT, "enum": SK_ENUM, "interface": SK_INTERFACE, "fn": SK_FUNCTION, "const": SK_CONSTANT}
@@ -74,13 +74,13 @@ def lsp_pos(p: dict) -> Pos:
 
 
 def to_diag(d: dg.Diagnostic) -> dict:
-    return {"range": lsp_range(d.range), "severity": 1 if d.severity == dg.ERROR else 2, "code": d.code, "source": "kif",
+    return {"range": lsp_range(d.range), "severity": d.severity, "code": d.code, "source": "kif",
             "message": d.message}
 
 
 def from_diag(j: dict) -> dg.Diagnostic:
     r = j["range"]
-    return dg.Diagnostic(Range(lsp_pos(r["start"]), lsp_pos(r["end"])), dg.ERROR if j.get("severity", 1) == 1 else 2,
+    return dg.Diagnostic(Range(lsp_pos(r["start"]), lsp_pos(r["end"])), j.get("severity", 1) if j.get("severity", 1) in (1, 2, 3) else 2,
                          str(j.get("code", "")), j.get("message", ""))
 
 

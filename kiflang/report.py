@@ -19,7 +19,7 @@ import json
 import sys
 from typing import IO, List, Optional, Tuple
 
-from .diagnostics import ERROR, Diagnostic
+from .diagnostics import ERROR, INFO, Diagnostic
 
 FORMATS = ("text", "json", "sarif", "github")
 
@@ -47,13 +47,13 @@ class Reporter:
         if self.fmt == "text":
             print(d.format(path), file=self.stream)
         elif self.fmt == "github":
-            kind = "error" if d.severity == ERROR else "warning"
+            kind = {ERROR: "error", INFO: "note"}.get(d.severity, "warning")
             props = f"file={_escape(path, True)},line={d.range.start.line + 1},col={d.range.start.col + 1}," \
                     f"endLine={d.range.end.line + 1},endColumn={d.range.end.col + 1},title={_escape(d.code, True)}"
             print(f"::{kind} {props}::{_escape(d.message)}", file=self.stream)
 
     def failed(self, werror: bool = False) -> bool:
-        return any(d.severity == ERROR or werror for _p, d in self.items)
+        return any(d.severity == ERROR or (werror and d.severity != INFO) for _p, d in self.items)
 
     def finish(self) -> None:
         if self.fmt == "json":
@@ -68,7 +68,7 @@ class Reporter:
             r = _record(path, d)
             results.append({
                 "ruleId": d.code,
-                "level": "error" if d.severity == ERROR else "warning",
+                "level": {ERROR: "error", INFO: "note"}.get(d.severity, "warning"),
                 "message": {"text": d.message},
                 "locations": [{"physicalLocation": {
                     "artifactLocation": {"uri": path},
@@ -84,7 +84,7 @@ class Reporter:
 
 def _record(path: str, d: Diagnostic) -> dict:
     return {"file": path, "line": d.range.start.line + 1, "column": d.range.start.col + 1, "endLine": d.range.end.line + 1,
-            "endColumn": d.range.end.col + 1, "severity": "error" if d.severity == ERROR else "warning", "code": d.code,
+            "endColumn": d.range.end.col + 1, "severity": {ERROR: "error", INFO: "info"}.get(d.severity, "warning"), "code": d.code,
             "message": d.message}
 
 

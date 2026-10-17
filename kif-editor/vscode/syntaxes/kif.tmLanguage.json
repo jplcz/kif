@@ -190,7 +190,7 @@
           "include": "#constant"
         },
         {
-          "match": "\\b(align|allocates|atomic_callback|atomic_entry|atomic_exempt|atomic_lock|atomic_only|atomic_scope|atomic_token|caller_location|checked|copy|count|cxx_name|derive|ensures|enter_atomic|export|extends|flags|foreign|format|forward_args|header|heap|inline|kobj|lang|leave_atomic|len_ge|len_of|link_name|lt_len|might_sleep|no_prefix|non_empty|non_null|operator|ops|per_cpu|preserves|provided|repr|safe|self|send|small_stack|some|stack|sync|target|tls|trace|track_caller|typedef|unchecked_form|unsafe|version|visibility|when|zeroable)\\b(?=\\s*[(,\\]=]|\\s*$)",
+          "match": "\\b(align|allocates|atomic_callback|atomic_entry|atomic_exempt|atomic_lock|atomic_only|atomic_scope|atomic_token|caller_location|checked|copy|count|cxx_name|derive|ensures|enter_atomic|export|extends|flags|foreign|format|forward_args|header|heap|inline|kobj|lang|leave_atomic|len_ge|len_of|link_name|lt_len|might_sleep|no_prefix|non_empty|non_null|operator|ops|per_cpu|preserves|provided|repr|safe|self|send|small_stack|some|stack|sync|tainted|tainted_result|target|tls|trace|track_caller|trusted|typedef|unchecked_form|unsafe|untaint|version|visibility|when|zeroable)\\b(?=\\s*[(,\\]=]|\\s*$)",
           "name": "entity.other.attribute-name.kif"
         },
         {

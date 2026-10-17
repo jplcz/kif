@@ -333,7 +333,7 @@ def test_trusted_untaint_is_not_checked():
 def test_documented_mask_sanitizer_is_pure_and_clean():
     src = ("#[untaint]\nfn clamp_index(#[tainted] i: usize, len: usize) -> usize { let ok = (i < len) as usize; i & (ok * !0usize) }\n"
            "fn at(#[tainted] n: usize, t: &[u32]) -> u32 { t[untaint!(\"clamped below len by clamp_index\", clamp_index(n, 4))] }\n")
-    assert codes(src) == []
+    assert codes(src) == ["KIFT011"]    # accepted, with the suggestion to use ct:: and a barrier
 
 
 # ================================================================ `ct::` intrinsics (synthesized by the compiler)
@@ -369,3 +369,39 @@ def test_ct_intrinsics_reach_the_ir_as_intrinsic_calls():
     m = analyze("t.kif", "fn f(i: usize, n: usize) -> usize { ct::select(ct::lt(i, n), i, 0) }\n")
     calls = [i for b in ir.build_module(m.tree).functions[0].blocks for i in b.instrs if isinstance(i, ir.Call)]
     assert [(c.callee, c.kind) for c in calls] == [("ct::lt", "intrinsic"), ("ct::select", "intrinsic")]
+
+
+# ================================================================ editor support and suggestions
+
+def test_hand_rolled_sanitizer_gets_a_suggestion_not_an_error():
+    from kiflang import diagnostics as dg
+    hand = "#[untaint]\nfn s(#[tainted] i: usize, n: usize) -> usize { let ok = (i < n) as usize; i & (ok * !0usize) }\n"
+    d = [x for x in analyze("t.kif", hand).diagnostics if x.code == "KIFT011"]
+    assert len(d) == 1 and d[0].severity == dg.INFO and "ct::select" in d[0].message and "spec::value" in d[0].message
+    assert d[0].format("t.kif").split(": ")[1].startswith("note")
+    assert codes("#[untaint]\nfn s(#[tainted] i: usize, n: usize) -> usize { ct::select(ct::lt(i, n), i, 0) }\n") == []
+    assert codes("#[untaint]\nfn s(#[tainted] i: usize) -> usize { i & 3 }\n") == []
+
+
+def test_completion_offers_ct_intrinsics():
+    from kiflang import complete
+    src = "fn f(i: usize) -> usize { ct:: }\n"
+    m = analyze("t.kif", src)
+    labels = {i["label"] for i in complete.complete(m, src, 0, 30, [], [])}
+    assert labels == {"select", "eq", "lt", "mask", "clamp"}
+    top = {i["label"] for i in complete.complete(analyze("t.kif", "fn f() { }\n"), "fn f() { c }\n", 0, 12, [], [])}
+    assert "ct" in top
+
+
+def test_signature_help_for_ct_intrinsics():
+    from kiflang import complete
+    src = "fn f(i: usize, n: usize) -> usize { ct::select(i < n, ) }\n"
+    r = complete.signature_help(analyze("t.kif", src), src, 0, src.index(") }"))
+    sig = r["signatures"][0]
+    assert sig["label"] == "fn ct::select(c: bool, a: T, b: T) -> T" and r["activeParameter"] == 1
+    assert sig["label"][slice(*sig["parameters"][1]["label"])] == "a: T"
+
+
+def test_taint_attributes_are_known_to_the_editor():
+    from kiflang import lsp
+    assert {"tainted", "tainted_result", "untaint", "trusted"} <= set(lsp.ATTRIBUTES)

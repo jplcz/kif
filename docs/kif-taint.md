@@ -333,6 +333,7 @@ Attribute summary (all validated by `facts.py`-style checks; a misplaced one is 
 | `KIFT007` | a misplaced or contradictory taint attribute (`#[untaint]` with no `#[tainted]` parameter, `#[tainted]` on a local, both `untaint` and `tainted_result`) |
 | `KIFT008` | a tainted call target, or a tainted argument to an indirect call: function value, interface (rule 7) |
 | `KIFT010` | a call of an `#[untaint]` function lacks `untaint!("reason", ..)`, the reason is empty, or `untaint!` wraps something else (rule 9) |
+| `KIFT011` | *information, never an error*: an `#[untaint]` function builds its result from comparisons, `bool` casts or masks instead of `ct::` intrinsics and a `spec::value` barrier |
 | `KIFT009` | an `#[untaint]` function has a side effect: a store, a `&mut` parameter, an allocation, a panic, or a call to a non-pure function (rule 9) |
 
 ### Mitigations listed with every error
@@ -346,6 +347,7 @@ Attribute summary (all validated by `facts.py`-style checks; a misplaced one is 
 | `KIFT005` | mark the function `#[tainted_result]`; sanitise before returning |
 | `KIFT008` | call a concrete function instead of the indirect one; sanitise first |
 | `KIFT010` | write `untaint!("why this is safe here", f(x))`; state what the sanitizer guarantees at this site |
+| `KIFT011` | replace the hand-built mask with `ct::select` / `ct::lt` / `ct::eq` / `ct::mask` / `ct::clamp`; put `spec::value(..)` on the result |
 | `KIFT009` | return the computed value instead of storing it; move the effect to the caller; use `#[untaint(trusted)]` for a platform primitive |
 
 Each message names the **origin**: `'n' is tainted (parameter 'n', line 12); it is used as an index here`. The checker records the
@@ -402,6 +404,27 @@ docs/kif-ir-passes.md): deterministic, cacheable, parallel.
 - Diagnostics flow through `check_module` and the LSP like `KIFI0xx`.
 - Hover over a value shows `tainted (from parameter 'n')`.
 - `kif ir FILE --explain-taint` prints, per function, the taint of every temp and the origin chain (like `--explain-checks`).
+- **Completion and signature help.** After `ct::` the editor offers the five intrinsics with their synthesized signatures
+  (`fn ct::select(c: bool, a: T, b: T) -> T`) and parameter help while typing the arguments; `ct` is also offered as a module name.
+  The attribute names `tainted`, `tainted_result`, `untaint` (with the argument `trusted`) and `trusted` are completed and
+  highlighted. One table, `kiflang/intrinsics.py`, feeds the checker, the completer and this document.
+- **Suggestions (`KIFT011`).** An `#[untaint]` body that builds its result from comparisons, `bool` casts or `&`/`|`/`*` with a
+  negated or inverted operand, and uses neither a `ct::` intrinsic nor a `spec::` call, gets an *information* diagnostic (severity
+  3, printed as `note`; `-Werror` ignores it) at the function name. Rationale: a C compiler may turn a hand-built mask back into a
+  branch and the result is not behind a speculation barrier. There is nothing to opt out of: it is advice, and it disappears when
+  the body uses the intrinsics.
+
+  ```kif
+  #[untaint]
+  fn clamp_index(#[tainted] i: usize, len: usize) -> usize {
+      let ok = (i < len) as usize;       // KIFT011 (note): hand-built mask
+      i & (ok * !0usize)
+  }
+  // the suggested form: branch-free and barriered by construction
+  #[untaint]
+  fn clamp_index2(#[tainted] i: usize, len: usize) -> usize { ct::select(ct::lt(i, len), i, 0) }
+  ```
+
 - Code lens on each `#[untaint(trusted)]` function: "N callers" so the audited surface is visible.
 - **Barrier sites in the LSP.** Every barrier (explicit and implicit) is shown as an information diagnostic and an inlay hint at the
   construct that causes it (`?`, a tainted load, `spec::value`), with the reason and tainted origin, so the author sees what the

@@ -13,6 +13,7 @@ from .source import Range
 
 ERROR = 1
 WARNING = 2
+INFO = 3   # a suggestion: never fails a build, not even with -Werror
 
 
 @dataclass(frozen=True)
@@ -23,12 +24,16 @@ class Diagnostic:
     message: str
 
     def format(self, path: str) -> str:
-        kind = "error" if self.severity == ERROR else "warning"
+        kind = {ERROR: "error", INFO: "note"}.get(self.severity, "warning")
         return f"{path}:{self.range.start.line + 1}:{self.range.start.col + 1}: {kind} {self.code}: {self.message}"
 
 
 def error(rng: Range, code: str, message: str) -> Diagnostic:
     return Diagnostic(rng, ERROR, code, message)
+
+
+def info(rng: Range, code: str, message: str) -> Diagnostic:
+    return Diagnostic(rng, INFO, code, message)
 
 
 def warning(rng: Range, code: str, message: str) -> Diagnostic:

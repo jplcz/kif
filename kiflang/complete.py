@@ -30,6 +30,7 @@ from . import ast
 from . import lexer as lx
 from . import types as T
 from .astutil import doc_above, slice_text, walk
+from .intrinsics import CT, NAMESPACES
 
 CK_METHOD, CK_FUNCTION, CK_FIELD, CK_MODULE, CK_STRUCT, CK_INTERFACE, CK_ENUM, CK_KEYWORD, CK_CONSTANT = 2, 3, 5, 9, 22, 8, 13, 14, 21
 CK_VARIABLE = 6
@@ -102,6 +103,7 @@ ATTR_ARGS: Dict[str, List[str]] = {
     "header": ["<str>"],
     "link_name": ["<str>"],
     "ensures": ["some", "non_null", "non_empty", "len_ge"],
+    "untaint": ["trusted"],
     "len_ge": ["<n>"],
     "when": ["true", "false"],
     "visibility": ["default", "hidden", "protected", "internal"],
@@ -194,7 +196,14 @@ def _members(mod, tname: str) -> List[dict]:
     return items
 
 
+def _intrinsic_items() -> List[dict]:
+    return [{"label": n, "kind": CK_FUNCTION, "detail": i.signature, "documentation": {"kind": "markdown", "value": i.doc},
+             "insertText": i.snippet, "insertTextFormat": 2, "filterText": n} for n, i in sorted(CT.items())]
+
+
 def _qualified(mod, parts: List[str]) -> List[dict]:
+    if parts == ["ct"] and "ct" not in mod.modules:
+        return _intrinsic_items()
     if parts == ["error"] and "error" not in mod.modules:
         from .target import ERROR_ERRNO
         return [{"label": n, "kind": CK_ENUM_MEMBER, "detail": f"error::  (errno {e})"} for n, e in sorted(ERROR_ERRNO.items())]
@@ -514,7 +523,8 @@ def complete(mod, text: str, line: int, col: int, attributes: Iterable[str], sca
             tier = "4" if s.module is not mod and mod.prelude is not None and s.module is mod.prelude else "2"
             items.append({"label": n, "kind": kinds.get(s.kind, CK_STRUCT), "detail": s.kind, "data": {"k": "sym", "m": [], "n": n},
                           "sortText": f"{tier}_{999 - min(uses[n], 999):03d}_{n}"})
-    items += [{"label": n, "kind": CK_MODULE, "sortText": "3_" + n} for n in sorted(mod.modules) if n not in seen]
+    items += [{"label": n, "kind": CK_MODULE, "sortText": "3_" + n} for n in sorted(set(mod.modules) | (set(NAMESPACES) if not types_only else set()))
+              if n not in seen]
     for i in items:
         if "sortText" not in i:  # keywords and snippets after the names, builtin types last
             i["sortText"] = ("5_" if i["kind"] == CK_STRUCT and i.get("detail") == "builtin type" else "3_") + i["label"]
@@ -578,6 +588,8 @@ def signature_help(mod, text: str, line: int, col: int, analyze_fn=None) -> Opti
     if not m:
         return None
     path = m.group(1).split("::")
+    if len(path) == 2 and path[0] == "ct" and path[0] not in mod.modules and path[1] in CT:
+        return _intrinsic_help(path[1], commas)
     found = None  # (module whose source holds the declaration, FnDecl)
     method = False
     pre = head[: m.start()].rstrip()
@@ -623,6 +635,18 @@ def signature_help(mod, text: str, line: int, col: int, analyze_fn=None) -> Opti
     if doc:
         info["documentation"] = {"kind": "markdown", "value": doc}
     return {"signatures": [info], "activeSignature": 0, "activeParameter": min(commas, max(len(labels) - 1, 0))}
+
+
+def _intrinsic_help(name: str, commas: int) -> dict:
+    i = CT[name]
+    label = i.signature.replace("fn ", f"fn ct::", 1)
+    head = label.index("(") + 1
+    params, pos = [], head
+    for p in label[head: label.rindex(")")].split(", "):
+        params.append({"label": [pos, pos + len(p)]})
+        pos += len(p) + 2
+    return {"signatures": [{"label": label, "parameters": params, "documentation": {"kind": "markdown", "value": i.doc}}],
+            "activeSignature": 0, "activeParameter": min(commas, len(params) - 1)}
 
 
 # -- completionItem/resolve

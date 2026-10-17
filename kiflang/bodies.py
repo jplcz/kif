@@ -66,6 +66,7 @@ from . import cells
 from . import cfg
 from . import places
 from . import taint
+from .intrinsics import CT_ARITY   # the compiler-synthesized `ct::` intrinsics (docs/kif-taint.md section 7)
 from . import cmode
 from . import diagnostics as dg
 from . import methods as M
@@ -78,7 +79,6 @@ _KEYWORD_PATHS = frozenset({"Self", "self"})
 _GEN_NAMES = frozenset({"Some", "None", "Vec", "Option", "parse_int"})
 # `ok(..)` and `err(..)` build the type marked `#[lang(result)]` (reloco.kif).
 _RESULT_NAMES = frozenset({"ok", "err"})
-CT_ARITY = {"select": 3, "eq": 2, "lt": 2, "mask": 1, "clamp": 2}   # compiler-synthesized `ct::` intrinsics (docs/kif-taint.md section 7)
 # `some(x)` and `none()` build the type marked `#[lang(optional)]` (reloco.kif).
 _OPTIONAL_NAMES = frozenset({"some", "none"})
 

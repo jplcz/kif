@@ -737,9 +737,33 @@ def _purity(bc, f) -> None:
             bad(n, "it calls a function that is not #[untaint]")
 
 
+SUGGEST = ("this #[untaint] function computes by hand: a C compiler may turn a hand-built mask back into a branch, and the "
+           "result is not behind a speculation barrier. Prefer the `ct::` intrinsics (`ct::select`, `ct::lt`, `ct::eq`, "
+           "`ct::mask`, `ct::clamp`), which the code generator keeps branch-free and wraps in the value barrier, and put "
+           "`spec::value(..)` on the result (docs/kif-taint.md section 7)")
+
+
+def _suggest(bc, f) -> None:
+    """KIFT011 (a suggestion, never an error): an `#[untaint]` body that builds its result from comparisons or masks."""
+    by_hand = False
+    for n in astutil.walk(f.body):
+        if isinstance(n, ast.Call) and (getattr(n, "ct", None) or (isinstance(n.callee, ast.PathExpr) and n.callee.segments[0].name == "spec")):
+            return
+        if isinstance(n, ast.Binary) and n.op in ("<", "<=", ">", ">=", "==", "!="):
+            by_hand = True
+        elif isinstance(n, ast.Cast) and getattr(n.expr, "ty", None) is not None and n.expr.ty.name == "bool":
+            by_hand = True
+        elif isinstance(n, ast.Binary) and n.op in ("&", "|", "^", "*") and any(
+                isinstance(x, ast.Unary) and x.op in ("-", "!") for x in (n.left, n.right)):
+            by_hand = True
+    if by_hand:
+        bc.d.append(dg.info(f.name.range, "KIFT011", SUGGEST))
+
+
 def check_body(bc, f) -> None:
     """Run the walk over the body of `f` (called by the body checker, after the function was type-checked)."""
     if getattr(f, "body", None) is not None:
         _Walk(bc, f).run()
         if _has(getattr(f, "attrs", []), "untaint") and not _trusted(f):
             _purity(bc, f)
+            _suggest(bc, f)
