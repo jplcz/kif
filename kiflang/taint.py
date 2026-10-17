@@ -782,6 +782,23 @@ def _suggest(bc, f) -> None:
         bc.d.append(dg.info(f.name.range, "KIFT011", SUGGEST))
 
 
+def describe(f) -> List[str]:
+    """What the taint attributes of a function declaration mean, one sentence each, for hover text (empty when it has none)."""
+    attrs = list(getattr(f, "attrs", []))
+    out: List[str] = []
+    if _has(attrs, "untaint"):
+        out.append("**#[untaint]**" + (" (trusted)" if _trusted(f) else "") +
+                   ": maps tainted input to clean data. Call it as `untaint!(\"reason\", ...)`; the reason is kept in the generated code.")
+    if _has(attrs, "tainted_result"):
+        out.append("**#[tainted_result]**: the result is tainted; it may not decide a branch, an index, a divisor or a shift count until an `#[untaint]` function cleans it.")
+    if _has(attrs, "trusted"):
+        out.append("**#[trusted]**: opts this `#[export]` function out of the target's `taint.exports` policy.")
+    names = [p.name.text for p in getattr(f, "params", []) if _has(getattr(p, "attrs", []), "tainted")]
+    if names:
+        out.append("**#[tainted]** parameters: " + ", ".join(f"`{n}`" for n in names) + ".")
+    return out
+
+
 def check_body(bc, f) -> None:
     """Run the walk over the body of `f` (called by the body checker, after the function was type-checked)."""
     if getattr(f, "body", None) is not None:

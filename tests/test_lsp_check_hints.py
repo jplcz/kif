@@ -135,3 +135,22 @@ def test_taint_hints_can_be_turned_off():
     r.s.set_hint_options({"taint": False})
     r.open(TAINT_SRC)
     assert taint_hints(r) == []
+
+
+def test_hover_on_a_function_explains_its_taint_attributes():
+    r = Rig("off")
+    r.open(TAINT_SRC)
+    for line, text, want in ((1, "fn s(", ["#[untaint]", "#[tainted]", "`x`"]), (3, "fn get", ["#[tainted_result]"])):
+        col = (TAINT_SRC.split("\n")[line]).index(text) + 3
+        out = r.s.handle({"id": 9, "method": "textDocument/hover", "params": {"textDocument": {"uri": r.uri}, "position": {"line": line, "character": col}}})
+        value = out[0]["result"]["contents"]["value"]
+        assert all(w in value for w in want), value
+
+
+def test_code_lens_counts_the_callers_of_each_untaint_function():
+    r = Rig("off")
+    r.open(TAINT_SRC)
+    out = r.s.handle({"id": 10, "method": "textDocument/codeLens", "params": {"textDocument": {"uri": r.uri}}})
+    lenses = out[0]["result"]
+    assert [l["command"]["title"] for l in lenses] == ["untaint: 1 caller"], lenses
+    assert lenses[0]["range"]["start"]["line"] == 1

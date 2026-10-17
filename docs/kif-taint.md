@@ -425,7 +425,7 @@ docs/kif-ir-passes.md): deterministic, cacheable, parallel.
   fn clamp_index2(#[tainted] i: usize, len: usize) -> usize { ct::select(ct::lt(i, len), i, 0) }
   ```
 
-- Code lens on each `#[untaint(trusted)]` function: "N callers" so the audited surface is visible.
+- Code lens on each `#[untaint]` function (done): "N callers" so the audited surface is visible.
 - **Barrier sites in the LSP.** Every barrier (explicit and implicit) is shown as an information diagnostic and an inlay hint at the
   construct that causes it (`?`, a tainted load, `spec::value`), with the reason and tainted origin, so the author sees what the
   code generator will emit before building. A `trusted untaint` call site is shown the same way.
@@ -589,7 +589,7 @@ path is a place a reviewer sees, and the set is small.
    (default on, independent of `checks`).
 8. **Policy and tooling.** *(policy done: `taint.exports` and `taint.sinks` are target keys, carried to the checker through the cfg environment
    (`taint_exports`, `taint_sinks`) and to the IR backstop through `Function.taint_sinks`; `mul` is the opt-in sink; `KIFT009` was done earlier.
-   Hover and code lens remain.)* Original list: `taint.exports`, `taint.sinks`, mitigation lists, purity check `KIFT009`, hover, lens.
+   Hover and code lens are done too: hovering a function shows what its `#[untaint]`, `#[tainted_result]`, `#[trusted]` and `#[tainted]` attributes mean, and a code lens above each `#[untaint]` function reads `untaint: N callers` (`trusted untaint: ...` for the trusted ones), a click lists them.)* Original list: `taint.exports`, `taint.sinks`, mitigation lists, purity check `KIFT009`, hover, lens.
 
 Each stage ends with documentation in this file's style (rule, rationale, opt-out, commented example) and a `tests/c` case.
 

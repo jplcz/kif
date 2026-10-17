@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import url2pathname
 
-from . import ast, hints, passes
+from . import ast, hints, passes, taint
 from . import diagnostics as dg
 from . import lexer as lx
 from . import quickfix
@@ -259,6 +259,7 @@ class Server:
                 "documentSymbolProvider": True,
                 "definitionProvider": True,
                 "hoverProvider": True,
+                "codeLensProvider": {"resolveProvider": False},
                 "referencesProvider": True,
                 "renameProvider": {"prepareProvider": True},
                 "completionProvider": {"triggerCharacters": [":", "[", ".", "(", "\"", "/"], "resolveProvider": True},
@@ -572,6 +573,23 @@ class Server:
                         "target": self._uri_of_key(target.key), "tooltip": target.key})
         return out
 
+    def req_textDocument_codeLens(self, p: dict) -> List[dict]:
+        """`N callers` above each `#[untaint]` function, `trusted` ones marked: the audited surface of the taint feature (docs/kif-taint.md)."""
+        uri = p["textDocument"]["uri"]
+        out: List[dict] = []
+        for f in hints.functions_of(self.module(uri).tree):
+            if not any(a.name.text == "untaint" for a in getattr(f, "attrs", [])):
+                continue
+            at = f.name.range.start
+            _sym, refs = self._references(uri, at)
+            calls = [(u, r) for u, r in refs if r != f.name.range]
+            kind = "trusted untaint" if taint._trusted(f) else "untaint"
+            title = f"{kind}: {len(calls)} caller{'' if len(calls) == 1 else 's'}"
+            locs = [{"uri": u, "range": lsp_range(r)} for u, r in calls]
+            out.append({"range": lsp_range(f.name.range), "command": {
+                "title": title, "command": "editor.action.showReferences", "arguments": [uri, {"line": at.line, "character": at.col}, locs]}})
+        return out
+
     def req_textDocument_foldingRange(self, p: dict) -> List[dict]:
         """Multi-line `{ .. }` blocks and runs of two or more `//` comment lines (a doc comment folds like a block)."""
         text = self.docs[p["textDocument"]["uri"]]
@@ -604,6 +622,9 @@ class Server:
         doc = doc_above(lines, sym.node) if sym.module.source else ""
         if doc:
             text += "\n\n" + doc
+        notes = taint.describe(sym.node)
+        if notes:
+            text += "\n\n" + "\n\n".join(notes) + "\n\n_Taint: docs/kif-taint.md_"
         return {"contents": {"kind": "markdown", "value": text}, "range": lsp_range(tokens[found[1]].range)}
 
     @staticmethod

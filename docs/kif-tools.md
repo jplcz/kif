@@ -182,7 +182,8 @@ It is built on the tools above, so the editor shows exactly what the command lin
 | diagnostics | compiler diagnostics, plus the lint rules once the file compiles (like `kif lint`); updated on every change |
 | documentSymbol | declarations with interface methods, enum members and struct fields nested |
 | definition | names (also `a::b::c` and `use`d names) and `import "x.kif"` paths |
-| hover | the declaration signature plus its `//` doc comment |
+| hover | the declaration signature plus its `//` doc comment, and for a function with taint attributes what they mean |
+| code lens | `untaint: N callers` above each `#[untaint]` function (docs/kif-taint.md); a click lists the call sites |
 | references, rename | every use of a declaration in the open documents; rename validates the new name |
 | completion | context-aware, see "Completion" below (`kiflang/complete.py`) |
 | completionItem/resolve | for the highlighted completion item: `detail` becomes the full declaration (`fn read(&self, off: u32) -> u32`, `base: u64`, `struct hpet`) and `documentation` the `//` comment above it. The list itself carries neither (it stays cheap); each item has a `data` key (kind, type, name, document) that the client sends back |
