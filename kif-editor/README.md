@@ -97,7 +97,7 @@ language grammar). Check with `npx tree-sitter parse ../samples/example.kif`.
 
 The server is [`kiflang.lsp`](../kiflang/lsp.py) (see `docs/kif-tools.md`; Python 3, standard library only, no install step). The VS Code
 extension starts it itself (setting `kif.server.python`, default `python3`; `kif.server.includeDirs` adds import
-search directories; `kif.server.enabled` turns it off; `kif.server.inlayHints.checks` = `off`/`kept`/`all` and `.delayMs` control the run-time check hints, see `docs/kif-tools.md`). The packaged `.vsix` carries a copy of the server in
+search directories; `kif.server.enabled` turns it off; `kif.server.inlayHints.checks` = `off`/`kept`/`all`, `.taint` (barriers and untaint reasons) and `.delayMs` control the inlay hints, see `docs/kif-tools.md`). The packaged `.vsix` carries a copy of the server in
 `server/`; with `--extensionDevelopmentPath` it uses the one in the checkout. Besides the checker's errors and the lint rules, it shows
 warnings from the IR check passes (`KIFI010`: an index that provably fails, e.g. `a[7]` on `[u8; 4]`; docs/kif-ir-passes.md). The
 same run-time checks are listed on the command line by `kif ir FILE --explain-checks`.

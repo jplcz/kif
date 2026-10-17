@@ -108,3 +108,30 @@ def test_a_changed_declaration_invalidates_every_function():
     r.hints()
     mp.undo()
     assert calls == ["f"]
+
+
+TAINT_SRC = ("#[untaint]\nfn s(#[tainted] x: usize) -> usize { x & 3 }\n"
+             "#[tainted_result]\nfn get() -> usize { 1 }\n"
+             "#[tainted_result]\nfn g(#[tainted] t: &[u32], c: usize) -> u32 {\n    spec::barrier();\n    let k = untaint!(\"masked to 0..3\", s(get()));\n    t[c] + t[k]\n}\n")
+
+
+def taint_hints(r):
+    out = r.s.handle({"id": 3, "method": "textDocument/inlayHint", "params": {"textDocument": {"uri": r.uri}, "range": WHOLE}})
+    return [(h["position"]["line"], h["label"], h.get("tooltip", "")) for h in out[0]["result"] if h["label"][0] in "⛓🛈"]
+
+
+def test_taint_hints_show_barriers_and_untaint_reasons():
+    r = Rig("off")
+    r.open(TAINT_SRC)
+    got = taint_hints(r)
+    assert (6, "⛓ barrier", "fence (explicit: spec::barrier())") in got
+    assert any(l == 7 and lab == "🛈 untaint: masked to 0..3" for l, lab, _ in got)
+    loads = [g for g in got if g[0] == 8]
+    assert len(loads) == 2 and all("implicit: tainted element load" in tip for _, _, tip in loads)
+
+
+def test_taint_hints_can_be_turned_off():
+    r = Rig("off")
+    r.s.set_hint_options({"taint": False})
+    r.open(TAINT_SRC)
+    assert taint_hints(r) == []

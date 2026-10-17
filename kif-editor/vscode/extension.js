@@ -48,7 +48,7 @@ function activate(context) {
         lint: cfg.get("lint", true),
         lintConfig: cfg.get("lintConfig", ""),
         baselines: cfg.get("baselines", []),
-        inlayHints: { checks: cfg.get("inlayHints.checks", "kept"), delayMs: cfg.get("inlayHints.delayMs", 400) },
+        inlayHints: { checks: cfg.get("inlayHints.checks", "kept"), delayMs: cfg.get("inlayHints.delayMs", 400), taint: cfg.get("inlayHints.taint", true) },
         staticSnippets: true, // snippets/kif.code-snippets already offers the keyword snippets; the server adds only construction patterns
       },
     }

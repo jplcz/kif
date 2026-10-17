@@ -142,6 +142,7 @@ class Server:
         self.shutdown = False
         self.exit_code: Optional[int] = None
         self.hint_mode = "kept"  # which run-time check hints to show: off | kept | all (kif.server.inlayHints.checks)
+        self.hint_taint = True  # show the speculation barriers and untaint reasons (kif.server.inlayHints.taint)
         self.hint_delay = 0.4  # seconds the document must be quiet before check hints are computed (kif.server.inlayHints.delayMs)
         self.hint_cache = hints.HintCache()
         self.now = time.monotonic  # replaced in tests
@@ -277,6 +278,8 @@ class Server:
     def set_hint_options(self, o: dict) -> None:
         if o.get("checks") in hints.MODES:
             self.hint_mode = o["checks"]
+        if isinstance(o.get("taint"), bool):
+            self.hint_taint = o["taint"]
         if isinstance(o.get("delayMs"), (int, float)) and not isinstance(o.get("delayMs"), bool) and o["delayMs"] >= 0:
             self.hint_delay = o["delayMs"] / 1000.0
 
@@ -459,7 +462,7 @@ class Server:
         Proving is the costly part, so it is cached per function and only done once the document has been quiet for the grace
         period: while the user types, a function whose text changed gets no hints (stale ones would sit at wrong places), and a
         `workspace/inlayHint/refresh` is scheduled for when the grace period ends."""
-        if self.hint_mode == "off" or mod.tree is None or any(d.severity == dg.ERROR for d in mod.diagnostics):
+        if (self.hint_mode == "off" and not self.hint_taint) or mod.tree is None or any(d.severity == dg.ERROR for d in mod.diagnostics):
             return []
         lines = self.docs[uri].split("\n")
         quiet_at = self.last_change.get(uri, float("-inf")) + self.hint_delay
@@ -479,7 +482,12 @@ class Server:
             for h in found:
                 if not lo <= h.line <= hi:
                     continue
-                if self.hint_mode == "kept" and h.proved:
+                if h.kind in hints.TAINT_KINDS:
+                    if self.hint_taint:
+                        label = ("⛓ barrier" if h.kind == "barrier" else "🛈 untaint: " + h.tip.split(": ", 1)[-1])
+                        out.append({"position": {"line": h.line, "character": h.col}, "label": label, "paddingLeft": True, "tooltip": h.tip})
+                    continue
+                if self.hint_mode == "off" or (self.hint_mode == "kept" and h.proved):
                     continue
                 name = hints.LABELS.get(h.kind, h.kind)
                 tip = f"{name} check dropped: {h.why.replace('%', '')}" if h.proved else f"{name} check stays at run time: it could not be proved"

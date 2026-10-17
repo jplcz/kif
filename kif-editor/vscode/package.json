@@ -88,6 +88,11 @@
           "default": "kept",
           "description": "Inlay hints for run-time checks: `kept` marks the checks that stay (⚠), `all` also marks the ones the provers drop (✓), `off` shows none."
         },
+        "kif.server.inlayHints.taint": {
+          "type": "boolean",
+          "default": true,
+          "description": "Inlay hints for the taint feature: each speculation barrier (written or inserted by the compiler, ⛓) and each untaint! reason, at the expression they belong to."
+        },
         "kif.server.inlayHints.delayMs": {
           "type": "number",
           "default": 400,

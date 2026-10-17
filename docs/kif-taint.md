@@ -584,6 +584,9 @@ path is a place a reviewer sees, and the set is small.
    pointer), nested to any depth, an enum as its tag. Any other type (a tuple, a vector, a data-carrying enum) is a lowering error, not a silent no-op.
    Stage 6 is complete.
 7. **Reasons.** `untaint!("reason", f(..))`, `KIFT010`, `Call.reason` in the IR and the audit comment in the C output (done with stage 1).
+   The editor part is done: inlay hints `⛓ barrier` (explicit or implicit, the tooltip has the reason and origin) and `🛈 untaint: <reason>` at the end of the
+   expression, from the same `taint_ir.explain` as `--explain-taint`, cached per function with the check hints, switched by `kif.server.inlayHints.taint`
+   (default on, independent of `checks`).
 8. **Policy and tooling.** `taint.exports`, `taint.sinks`, mitigation lists, purity check `KIFT009`, hover, lens.
 
 Each stage ends with documentation in this file's style (rule, rationale, opt-out, commented example) and a `tests/c` case.

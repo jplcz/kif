@@ -199,6 +199,8 @@ class Note(NamedTuple):
     kind: str   # source | barrier | untaint
     text: str
     function: str
+    end_line: int = 0   # 1-based end of the construct, where the editor puts its hint
+    end_col: int = 0
 
 
 def explain(fn: ir.Function) -> List[Note]:
@@ -211,20 +213,24 @@ def explain(fn: ir.Function) -> List[Note]:
         r = getattr(site, "range", None)
         return (r.start.line + 1, r.start.col + 1) if r is not None else (0, 0)
 
+    def end(site) -> Tuple[int, int]:
+        r = getattr(site, "range", None)
+        return (r.end.line + 1, r.end.col + 1) if r is not None else (0, 0)
+
     if fn.node is not None:
         for p in fn.params:
             if p.taint:
                 q = next((x for x in fn.node.params if not x.receiver and x.name.text == p.name), None)
-                out.append(Note(*at(q.name if q is not None else fn.node), "source", f"parameter {p.name!r} is tainted", fn.name))
+                out.append(Note(*at(q.name if q is not None else fn.node), "source", f"parameter {p.name!r} is tainted", fn.name, *end(q.name if q is not None else fn.node)))
     for _, i in fn.instrs():
         if isinstance(i, ir.Barrier):
             kind = "value barrier" if i.kind == "value" else "fence"
-            out.append(Note(*at(i.site), "barrier", f"{kind} ({'implicit: ' + i.why if i.why else 'explicit: spec::' + ('value' if i.kind == 'value' else 'barrier') + '()'})", fn.name))
+            out.append(Note(*at(i.site), "barrier", f"{kind} ({'implicit: ' + i.why if i.why else 'explicit: spec::' + ('value' if i.kind == 'value' else 'barrier') + '()'})", fn.name, *end(i.site)))
         elif isinstance(i, ir.Call):
             if i.taint == "tainted_result":
-                out.append(Note(*at(i.site), "source", f"result of {i.callee}() is tainted", fn.name))
+                out.append(Note(*at(i.site), "source", f"result of {i.callee}() is tainted", fn.name, *end(i.site)))
             if i.reason:
-                out.append(Note(*at(i.site), "untaint", f"{i.callee}(): {i.reason}", fn.name))
+                out.append(Note(*at(i.site), "untaint", f"{i.callee}(): {i.reason}", fn.name, *end(i.site)))
     return sorted(out, key=lambda n: (n.line, n.col, n.kind))
 
 

@@ -255,6 +255,7 @@ tiers only in that they show the provers' verdict, not the target's: use `kif ir
 ```jsonc
 // settings.json
 "kif.server.inlayHints.checks": "kept",   // off | kept (only ⚠, the default) | all (⚠ and ✓)
+"kif.server.inlayHints.taint": true,      // ⛓ speculation barriers and 🛈 untaint! reasons (docs/kif-taint.md), independent of `checks`
 "kif.server.inlayHints.delayMs": 400      // grace period, see below
 ```
 

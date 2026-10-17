@@ -15,6 +15,7 @@ from . import ast, ir, passes
 # what the user sees for each check kind (the IR kind is `some` for an optional's `.value()`)
 LABELS = {"index": "bounds", "range": "range", "some": "has-value", "div": "divisor", "shift": "shift", "non_null": "null"}
 MODES = ("off", "kept", "all")
+TAINT_KINDS = ("barrier", "untaint")   # hints of the taint feature (docs/kif-taint.md), shown unless `inlayHints.taint` is off
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class Hint:
     kind: str
     proved: bool
     why: str  # the proof, empty for a kept check
+    tip: str = ""  # taint hints (`barrier`, `untaint`): the tooltip
 
 
 def function_hints(fn: ast.FnDecl) -> List[Hint]:
@@ -32,7 +34,7 @@ def function_hints(fn: ast.FnDecl) -> List[Hint]:
         f = ir.build_function(fn)
     except ir.Unsupported:
         return []
-    passes.run_function(f, ["prove"])
+    passes.run_function(f, ["prove", "barriers"])
     out: Dict[Tuple[int, int, str], Hint] = {}
     for _, c in f.checks():
         if c.tag or c.site is None or getattr(c.site, "range", None) is None:
@@ -43,6 +45,11 @@ def function_hints(fn: ast.FnDecl) -> List[Hint]:
         if old is not None and not old.proved:
             continue  # two checks at one spot: the weaker (kept) one is what the reader needs to see
         out[key] = Hint(end.line, end.col, c.kind, c.proof is not None, c.proof or "")
+    from . import taint_ir
+
+    for n in taint_ir.explain(f):
+        if n.kind in TAINT_KINDS and n.end_line:
+            out[(n.end_line - 1, n.end_col - 1, n.kind + n.text)] = Hint(n.end_line - 1, n.end_col - 1, n.kind, False, "", n.text)
     return sorted(out.values(), key=lambda h: (h.line, h.col))
 
 
