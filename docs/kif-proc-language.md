@@ -873,7 +873,7 @@ fn make(alloc: allocator_ref) -> result<ptr<ring>> { ptr<ring>::try_allocate(all
   everything: `kifc --small-stack=N` (also a project/CMake option). The narrowest setting wins; `#[small_stack(off)]` lifts it.
   The checker estimates the frame of each function: sizes of locals, by-value parameters and temporaries whose layout kif knows
   (scalars, arrays, structs, enums), plus the **deepest call chain** through kif functions that have a known frame (recursion
-  is "unbounded" and is always reported). Over the limit it warns KIFW010 naming the biggest locals and suggesting `#[heap]` or a
+  is "unbounded" and is always reported). Over the limit it warns KIFW010 (design: docs/kif-stack.md) naming the biggest locals and suggesting `#[heap]` or a
   borrow; a single local larger than N is KIFP084. `extern` callees count as 0 unless annotated `#[stack(N)]`. The estimate is
   conservative about layout, not about the compiler's register allocation, so it is a warning, never ABI.
 - C: `#[heap]` is a plain struct; with an `impl` it gets `S_try_new`/`S_delete` functions that the compiler pairs with automatic drops of `ptr<S>` (`docs/kif-c-backends.md` 3.2).

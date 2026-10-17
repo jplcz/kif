@@ -205,7 +205,7 @@ def _wipe_of(fn):
 
 def test_a_pass_that_removes_a_wipe_is_rejected(scratch):
     r = _guarded(scratch, lambda fn: (lambda bn: bn[0].instrs.pop(bn[1]))(_wipe_of(fn)))
-    assert [d.code for d in r.diagnostics] == ["KIFW010"] and "removed" in r.diagnostics[0].message
+    assert [d.code for d in r.diagnostics] == ["KIFW012"] and "removed" in r.diagnostics[0].message
 
 
 def test_a_pass_that_moves_or_duplicates_a_wipe_is_rejected(scratch):
@@ -217,9 +217,9 @@ def test_a_pass_that_moves_or_duplicates_a_wipe_is_rejected(scratch):
         b, n = _wipe_of(fn)
         b.instrs.insert(n, b.instrs[n])
 
-    assert [d.code for d in _guarded(scratch, move).diagnostics] == ["KIFW010"]
+    assert [d.code for d in _guarded(scratch, move).diagnostics] == ["KIFW012"]
     scratch.pop("rogue")
-    assert [d.code for d in _guarded(scratch, dup).diagnostics] == ["KIFW010"]
+    assert [d.code for d in _guarded(scratch, dup).diagnostics] == ["KIFW012"]
 
 
 def test_a_pass_that_changes_nothing_else_is_accepted(scratch):

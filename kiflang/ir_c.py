@@ -1692,7 +1692,7 @@ class _Emit:
         if wanted != kept:
             from .lower_c import LowerError
 
-            raise LowerError(f"KIFW010: the C output of {fn.name}() has {kept} secure wipe(s) where the IR has {wanted}: the text folder dropped or duplicated one (docs/kif-secure-wipe.md rule W11)")
+            raise LowerError(f"KIFW012: the C output of {fn.name}() has {kept} secure wipe(s) where the IR has {wanted}: the text folder dropped or duplicated one (docs/kif-secure-wipe.md rule W11)")
         for t in used_temps.values():
             if t.id in self.strs or t.id in self.errs or t.id in self.alias or t.id in self.allocs or t.id in self.rinc or t.type.kind == irtypes.UNIT:
                 continue

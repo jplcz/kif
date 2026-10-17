@@ -5,7 +5,7 @@
 """The wipe guard (docs/kif-secure-wipe.md rule W11): no pass may remove, duplicate or move a `Wipe`.
 
 The pass manager takes a `snapshot` of a function before every `transform` pass and calls `verify` after it; a function with no wipe costs
-nothing. A broken rule is `KIFW010`, a compiler error naming the pass, the function and the wipe: there is no opt-out.
+nothing. A broken rule is `KIFW012`, a compiler error naming the pass, the function and the wipe: there is no opt-out.
 
 "Moved" means the wipe is no longer in its block, or the instructions that touch the wiped slot (a load, store, borrow, write, `live`,
 `dead`, another wipe) are no longer on the same sides of it. An instruction a pass removed is not a move.

@@ -191,7 +191,7 @@ def run_function(fn: ir.Function, names: Sequence[str], resolve: Optional[Callab
                 ctx.report("KIFT012", f"internal: pass '{n}' broke the constant-time shape of {fn.name}(): {why} (docs/kif-taint.md section 7a)", fn.node.name if fn.node is not None else None)
         if wiped is not None:
             for why in wipeguard.verify(fn, wiped):
-                ctx.report("KIFW010", f"internal: pass '{n}' broke a secure wipe in {fn.name}(): {why} (docs/kif-secure-wipe.md rule W11)", fn.node.name if fn.node is not None else None)
+                ctx.report("KIFW012", f"internal: pass '{n}' broke a secure wipe in {fn.name}(): {why} (docs/kif-secure-wipe.md rule W11)", fn.node.name if fn.node is not None else None)
         stats.append(Stat(n, time.perf_counter() - t0))
         for gone in p.invalidates:
             ctx.results.pop(gone, None)
