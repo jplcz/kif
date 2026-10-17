@@ -15,7 +15,8 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from . import ast, ir
 from . import diagnostics as dg
-from . import stack
+from . import layout, stack, stackhelpers
+from .irtypes import parse_type
 from .modsec import _decls
 from .target import StackPlan
 
@@ -41,7 +42,8 @@ class Depth:
 HELPER = "<generated helper "  # `<generated helper try_push>`: a function the backend writes (`kif_vec_u32_try_push`); its cost is the backend's (stackhelpers.py)
 DROP = "<generated drop glue "  # `<generated drop glue vector>`: `kif_vec_u32_drop`, `kif_str_drop`, ...
 LEAF_TRY = {"try_at", "try_slice", "try_value", "try_get", "try_front", "try_back"}  # accessors: inline, no frame worth counting
-GLUE_TYPES = {"vector", "secure_vector", "str", "optional", "ptr"}
+GLUE_TYPES = {"vector", "secure_vector", "str", "optional"}
+PTR = "<generated ptr "  # `<generated ptr S new>` / `<generated ptr S delete>`: the `S_try_new` / `S_delete` of one heap type: their cost depends on S
 
 
 def hidden_cost(plan: StackPlan, name: str) -> Optional[int]:
@@ -51,6 +53,13 @@ def hidden_cost(plan: StackPlan, name: str) -> Optional[int]:
     if name.startswith(HELPER):
         return stackhelpers.helper_cost(plan, name[len(HELPER):-1])
     return stackhelpers.drop_cost(plan, name[len(DROP):-1])
+
+
+def _heap_type(t) -> str:
+    """S of a `result<ptr<S>>` (what `ptr::try_allocate` returns) or `ptr<S>`, else an empty string."""
+    while t.kind == "named" and t.name in ("result",) and t.args:
+        t = t.args[0]
+    return t.args[0].name if t.kind == "named" and t.name == "ptr" and t.args and t.args[0].kind == "named" else ""
 
 
 def _receiver(c: ir.Call) -> str:
@@ -81,7 +90,17 @@ def _callees(fn: ir.Function, key: str, table: Dict[str, object], notes: List[st
                 else:
                     notes.append(f"{i.decl}() is not declared in this module")
             # an empty `decl` on a free/method/assoc call is a prelude or intrinsic helper: inline code, except the ones the C backend writes as functions
-            if not i.decl and i.kind != "value" and i.callee.rsplit("::", 1)[-1].startswith("try_") and i.callee.rsplit("::", 1)[-1] not in LEAF_TRY:
+            if not i.decl and i.callee in ("ptr::try_allocate", "ptr::try_create") and i.dst is not None:
+                # the call's own type often has no `S` yet (`result<ptr<?>>`): then every `ptr<S>` the function holds may be the one built here
+                made = [_heap_type(i.dst.type)] if _heap_type(i.dst.type) else sorted({_heap_type(l.type) for l in fn.locals if _heap_type(l.type)})
+                for s in made[1:]:
+                    if f"{PTR}{s} new>" not in out:
+                        out.append(f"{PTR}{s} new>")
+                if made:
+                    target = f"{PTR}{made[0]} new>"
+                else:
+                    notes.append("a ptr allocation of a type kif cannot determine")
+            elif not i.decl and i.kind != "value" and i.callee.rsplit("::", 1)[-1].startswith("try_") and i.callee.rsplit("::", 1)[-1] not in LEAF_TRY:
                 op = i.callee.rsplit("::", 1)[-1]
                 rt = _receiver(i)
                 family = "str" if rt == "str" else "vector" if rt in ("vector", "secure_vector") else ""
@@ -90,6 +109,8 @@ def _callees(fn: ir.Function, key: str, table: Dict[str, object], notes: List[st
             ty = (i.local if isinstance(i, ir.Dead) else i.value).type
             if ty.kind == "named" and f"{ty.name}::drop" in table:
                 target = f"{ty.name}::drop"
+            elif ty.kind == "named" and ty.name == "ptr" and ty.args and ty.args[0].kind == "named":
+                target = f"{PTR}{ty.args[0].name} delete>"
             elif ty.kind == "named" and ty.name in GLUE_TYPES:
                 target = f"{DROP}{'vector' if ty.name in ('vector', 'secure_vector') else ty.name}>"
         if target is not None and target not in out:
@@ -171,6 +192,20 @@ def analyze(built: ir.Module, items, plan: StackPlan, tree=None) -> List[Depth]:
             own[key] = n or 0
             notes[key] = [] if n is not None else [f"{key}() has no #[stack(N)]"]
             edges[key] = []
+    sizes = layout.struct_table(items)
+    for name in sorted({c for cs in edges.values() for c in cs if c.startswith(PTR)}):
+        s, what = name[len(PTR):-1].rsplit(" ", 1)
+        if what == "new":
+            ctor = table.get(f"{s}::try_construct_at")
+            slots = [layout.size_align(parse_type(ir.type_text(q.ty)), plan, sizes) for q in (getattr(ctor, "params", None) or [])[1:]]
+            if None in slots:
+                own[name], notes[name] = 0, [f"{s}::try_construct_at has a parameter kif cannot size, so ptr<{s}> creation is a lower bound"]
+            else:
+                own[name], notes[name] = stackhelpers.heap_new_frame(plan, slots), []
+            edges[name] = [f"{s}::try_construct_at"] if ctor is not None else []
+        else:
+            own[name], notes[name] = stackhelpers.heap_delete_frame(plan), []
+            edges[name] = [f"{s}::drop"] if f"{s}::drop" in table else []
     for name in sorted({c for cs in edges.values() for c in cs if c.startswith((HELPER, DROP))}):
         cost = hidden_cost(plan, name)
         own[name], edges[name] = cost or 0, []

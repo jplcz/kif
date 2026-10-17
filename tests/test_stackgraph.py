@@ -109,3 +109,13 @@ def test_helper_costs_come_from_the_generated_code():
     from kiflang import stackhelpers
     assert stackhelpers.estimate(target.load("c"), PLAN) == stackhelpers.Costs(PLAN.helpers, PLAN.drops)
     assert stackhelpers.ESTIMATORS.keys() == {"c"}  # `cxx` has none yet
+
+
+def test_ptr_creation_cost_depends_on_the_constructor():
+    def make(param):
+        d, _ = depths("struct cell { v: u32, }\nimpl cell {\n    fn try_construct_at(mem: c_ptr<Self>, a: %s) -> result<()> { ok(()) }\n}\n"
+                      "fn make() -> result<u32> {\n    let p: ptr<cell> = ptr::try_allocate(default_allocator(), 1)?;\n    ok(p.v)\n}\n" % param)
+        return d["make"]
+    small, big = make("u32"), make("[u8; 256]")
+    assert small.chain[:3] == ["make", "<generated ptr cell new>", "cell::try_construct_at"]
+    assert big.depth - small.depth >= 2 * 256 - 16  # the array sits in the constructor's frame and in `try_new`'s

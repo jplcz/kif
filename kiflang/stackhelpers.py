@@ -10,6 +10,8 @@ cost depends on how the *backend* writes them, so each target language has its o
 - `c`: the helpers are the very text `lower_c.Lowerer` writes for this target (its allocator, its wipe primitive, its errno values). The
   estimator parses that text, sizes each function's parameters and locals with the target's pointer width, and follows the calls between
   helpers (`try_push` -> `grow` -> `try_reserve`), the same frame model as `stack.frame`.
+- `ptr<T>` is different: `S_try_new` and `S_delete` exist once per type and what they cost depends on the type (the constructor's parameters, and
+  the constructor and `drop` they call), so the call graph builds those nodes per type (`heap_new_frame`, `heap_delete_frame`).
 - `cxx`: kif has no C++ backend yet, so there is no estimator: the cost is unknown (a lower bound) until `stack.helper_frame` /
   `stack.drop_frame` say what the project's containers use.
 
@@ -45,8 +47,19 @@ def _size(ctype: str, stars: str, bits: int) -> Tuple[int, int]:
     return 2 * word, word
 
 
-def _parse(text: str, plan) -> Dict[str, Tuple[int, List[str]]]:
-    """`{function: (own frame, helpers it calls)}` for every helper function in the generated C `text`."""
+def _allocator_names(target) -> Set[str]:
+    """The function names the target's allocator templates call (`kmalloc`, `realloc`, `free`, ...): the part before the first `(`."""
+    out: Set[str] = set()
+    for key in ("malloc", "zalloc", "realloc", "free", "aligned"):
+        m = re.match(r"\s*\(?\s*(?:\([^()]*\)\s*)?(\w+)\s*\(", target.get("alloc." + key) or "")
+        if m:
+            out.add(m.group(1))
+    return out
+
+
+def _parse(text: str, plan, allocator: Set[str] = frozenset()) -> Dict[str, Tuple[int, List[str]]]:
+    """`{function: (own frame, helpers it calls)}` for every helper function in the generated C `text`. A function that calls the allocator
+    (`allocator`: its function names) has the target's `stack.alloc_frame` added to its own frame: the allocator is a callee kif cannot see."""
     found = [(m.group(1), m.group(2), m.group(3)) for m in FN.finditer(text)]
     names = {n for n, _, _ in found}
     out: Dict[str, Tuple[int, List[str]]] = {}
@@ -65,6 +78,8 @@ def _parse(text: str, plan) -> Dict[str, Tuple[int, List[str]]]:
             size, align = _size(ctype, stars, plan.pointer_bits)
             total += (-total % align) + size
         frame = total + (-total % plan.align) + plan.frame_overhead
+        if any(re.search(rf"\b{re.escape(a)}\(", body) for a in allocator):
+            frame += plan.alloc_frame
         out[name] = (frame, [n for n in names if n != name and re.search(rf"\b{re.escape(n)}\(", body)])
     return out
 
@@ -97,7 +112,7 @@ def _c(target, plan) -> Costs:
         _, text = lw.str_defs()
     except lower_c.LowerError:
         return Costs(None, None)
-    fns = _parse("\n".join(vec + text), plan)
+    fns = _parse("\n".join(vec + text), plan, _allocator_names(target))
     depth = _depth(fns)
     ops: Dict[str, int] = {}
     drops: Dict[str, int] = {}
@@ -148,3 +163,24 @@ def drop_cost(plan, kind: str) -> Optional[int]:
     if plan.drops is None:
         return None
     return plan.drops.get(kind, max(plan.drops.values(), default=0))
+
+
+def _frame(slots: List[Tuple[int, int]], plan) -> int:
+    total = 0
+    for size, align in slots:
+        total += (-total % align) + size
+    return total + (-total % plan.align) + plan.frame_overhead
+
+
+def heap_new_frame(plan, params: List[Tuple[int, int]]) -> int:
+    """The frame of the generated `S_try_new(struct S **out, args..)` (`lower_c.Lowerer.heap_defs`) for a constructor whose parameters have
+    these `(size, align)`: the out pointer, the arguments, the local `p` and `rc`, and the allocator below it. What varies per type is the
+    arguments, and the constructor itself, which the call graph adds as a callee."""
+    word = plan.pointer_bits // 8
+    return _frame([(word, word), *params, (word, word), (4, 4)], plan) + plan.alloc_frame
+
+
+def heap_delete_frame(plan) -> int:
+    """The frame of the generated `S_delete(struct S *p)`, with the allocator's `free` below it (the `drop` it calls is a callee)."""
+    word = plan.pointer_bits // 8
+    return _frame([(word, word)], plan) + plan.alloc_frame
