@@ -260,3 +260,16 @@ def test_wipe_report_lists_structs_variables_and_exemptions():
     r = wipes.report(mod, m.tree, "t.kif")
     assert "s: wiped a; exempt p" in r and "Functions marked #[secure_wipe]: 1" in r
     assert "variable a (u32): 1 wipe(s)" in r and "f: b" in r and "total wipe sites: 1" in r
+
+
+STRUCT = "#[secure_wipe]\nstruct key { k: [u8; 4], n: u32 }\nfn eat(k: key) -> u32 { return k.n; }\n"
+
+
+def test_moved_from_secure_struct_slot_is_wiped_once_before_its_dead():
+    text = wiped(STRUCT + "fn f() -> u32 { let a = key { k: [1, 2, 3, 4], n: 7 }; return eat(a); }")
+    assert text.count("wipe %a") == 1 and "moved-from slot" in text
+    assert text.index("move %a") < text.index("wipe %a") < text.index("dead %a")
+
+
+def test_a_secure_struct_that_is_never_moved_gets_no_slot_wipe():
+    assert "wipe %a" not in wiped(STRUCT + "fn f() -> u32 { let a = key { k: [1, 2, 3, 4], n: 7 }; return a.n; }")

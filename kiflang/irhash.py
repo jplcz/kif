@@ -25,7 +25,7 @@ SCHEMA = "kif-ir-hash/1"
 
 # class -> the fields that are part of the identity (operands, locals, temps and blocks are encoded by their renumbered id)
 HASHED: Dict[str, Tuple[str, ...]] = {
-    "Local": ("ty", "mut", "param", "length", "owns", "taint", "wipe", "wipe_volatile"),
+    "Local": ("ty", "mut", "param", "length", "owns", "taint", "wipe", "wipe_volatile", "secure_struct"),
     "Temp": ("ty", "owns"),
     "Const": ("value", "ty"),
     "Load": ("dst", "local"),

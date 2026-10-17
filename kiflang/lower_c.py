@@ -342,7 +342,8 @@ class Lowerer:
         pass runs first (the target's `ir.passes` selects and orders them, default: all) plus the `c_refusals` target pass, and an error
         a pass reports stops the build. A function the IR builder cannot handle is left without IR, which `fn_body` reports."""
         try:
-            fn = ir.build_function(f, self.requirement_resolver, self.twinned(f), frozenset(self.dropable), self.cur_owner, self.cells)
+            fn = ir.build_function(f, self.requirement_resolver, self.twinned(f), frozenset(self.dropable), self.cur_owner, self.cells,
+                                 frozenset(n for n in self.dropable if n in self.structs and self.secure(self.structs[n])))
         except ir.Unsupported:
             return
         self.fn.ir_hash = irhash.ir_hash(fn)
@@ -1439,7 +1440,7 @@ static __inline void {P}_drop({V} *v)
     def secure(sd) -> bool:
         return any(a.name.text == "secure_wipe" for a in sd.attrs)
 
-    def wipe_stmts(self, n: str, sd) -> List[str]:
+    def wipe_stmts(self, n: str, sd, moved: bool = False) -> List[str]:
         """The generated drop of a `#[secure_wipe]` struct `n`: one commented wipe per field that is not `#[wipe_exempt]`, in declaration order
         (rule W5); a field that is itself a secure struct is wiped by its own drop. Exempt fields are released afterwards like any field."""
         plan = self.t.wipe()
@@ -1457,7 +1458,7 @@ static __inline void {P}_drop({V} *v)
             inner = self.structs.get(f.ty.text) if isinstance(f.ty, ast.PathType) else None
             if inner is not None and self.secure(inner):
                 out.append(f"	/* kif: secure wipe: {n}.{f.name.text} ({f.ty.text}), by its own generated drop ({self.file}:{f.name.range.start.line + 1}) */")
-                out.append(f"	{f.ty.text}_drop(&{nm});")
+                out.append(f"	kif_wipe_{f.ty.text}(&{nm});" if moved else f"	{f.ty.text}_drop(&{nm});")
                 continue
             out.append(f"	/* kif: secure wipe{" (volatile)" if vol else ""}: {n}.{f.name.text} ({ir.type_text(f.ty)}), generated drop of #[secure_wipe] struct {n} ({self.file}:{f.name.range.start.line + 1}) */")
             out.append(f"	{plan.macro}(&{nm}, sizeof({nm}));")
@@ -1481,6 +1482,9 @@ static __inline void {P}_drop({V} *v)
                     rel.append("\t" + self.drop_stmt(nm, f.ty))
             if self.secure(self.structs[n]):
                 rel = self.wipe_stmts(n, self.structs[n]) + rel
+                protos.append(f"static __inline void kif_wipe_{n}(struct {n} *self);")
+                bodies.append(f"/* the moved-from slot of a {n}: its fields are wiped, nothing is released (the destination owns it) */\nstatic __inline void kif_wipe_{n}(struct {n} *self)\n{{\n"
+                              + "\n".join(self.wipe_stmts(n, self.structs[n], True)) + "\n}")
             call = f"\t{n}_drop_body(self);\n" if user else ""
             protos += [f"static __inline void {n}_drop_fields(struct {n} *self);", f"static __inline void {n}_drop(struct {n} *self);"]
             bodies.append(f"static __inline void {n}_drop_fields(struct {n} *self)\n{{\n" + "\n".join(rel) + "\n}")

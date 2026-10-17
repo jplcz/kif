@@ -62,6 +62,7 @@ class Local:
     taint: bool = False  # a `#[tainted]` parameter: the slot starts out holding untrusted data (docs/kif-taint.md); read by the `taint` pass
     wipe: bool = False  # a secure variable (`#[secure_wipe]`, or a plain local of a `#[secure_wipe]` function): the `wipes` pass wipes it (docs/kif-secure-wipe.md)
     wipe_volatile: bool = False  # `#[secure_wipe(volatile)]`: the wipe uses the target's volatile primitive
+    secure_struct: bool = False  # the slot holds a `#[secure_wipe]` struct by value: a moved-from slot is wiped field by field (rule W9)
 
     @cached_property
     def type(self) -> Type:
@@ -817,13 +818,18 @@ def plain_type(t: Type) -> bool:
     return False
 
 
+def secure_types(items) -> frozenset:
+    """The names of the `#[secure_wipe]` structs of a module."""
+    return frozenset(it.name.text for it in items if isinstance(it, ast.StructDecl) and any(a.name.text == "secure_wipe" for a in it.attrs))
+
+
 def drop_types(items) -> frozenset:
     """The names of the structs of a module with drop glue: they have a `drop` method, or a field that owns something (to a fixpoint)."""
     structs = {it.name.text: it for it in items if isinstance(it, ast.StructDecl)}
     drops = {(it.target.text if isinstance(it.target, ast.PathType) else "") for it in items
              if isinstance(it, ast.ImplDecl) and it.iface is None and any(isinstance(f, ast.FnDecl) and f.name.text == "drop" for f in it.items)}
     drops &= set(structs)
-    drops |= {n for n, st in structs.items() if any(a.name.text == "secure_wipe" for a in st.attrs)}  # a secure struct has a generated drop
+    drops |= secure_types(items)  # a secure struct has a generated drop
     while True:
         more = {n for n, st in structs.items() if n not in drops and any(owns_type(parse_type(type_text(f.ty)), drops) for f in st.fields)}
         if not more:
@@ -1812,7 +1818,7 @@ class _Builder:
         self.start(join)
 
 
-def build_function(fn: ast.FnDecl, resolve=None, entry: bool = True, drops=frozenset(), owner: Optional[str] = None, cells=None) -> Function:
+def build_function(fn: ast.FnDecl, resolve=None, entry: bool = True, drops=frozenset(), owner: Optional[str] = None, cells=None, secure=frozenset()) -> Function:
     """The IR of one checked function; raises `Unsupported` for constructs the builder does not handle yet.
 
     `resolve(call)` names the declaration a call refers to (None when unknown); with it, a call to a function whose parameters carry
@@ -1821,6 +1827,8 @@ def build_function(fn: ast.FnDecl, resolve=None, entry: bool = True, drops=froze
     built = _Builder(fn, resolve, entry, drops, owner, cells).run()
     built.require_proved = required_kinds(fn.attrs)
     built.taint_sinks = getattr(fn, "taint_sinks", built.taint_sinks)
+    for loc in built.locals:
+        loc.secure_struct = loc.ty in secure
     return built
 
 
@@ -1881,7 +1889,7 @@ def build_module(tree) -> Module:
         if f.body is None:
             continue
         try:
-            m.functions.append(build_function(f, resolve, True, drops, owners.get(id(f)), cells))
+            m.functions.append(build_function(f, resolve, True, drops, owners.get(id(f)), cells, secure_types(items)))
             m.functions[-1].require_proved = required_kinds(scope_attrs[id(f)], f.attrs)
         except Unsupported as e:
             m.skipped.append((f.name.text, e.message))

@@ -60,3 +60,15 @@ fn nonce_sum(seed: u8) -> u32 {
     let n: nonce = nonce { bytes: [seed; 16], counter: 5 };
     (n.bytes[3] as u32) + n.counter
 }
+
+fn take(n: nonce) -> u32 {
+    n.counter
+}
+
+// The nonce is moved into `take`, which wipes it through its own drop. The bytes the move leaves in `n` are wiped too, field by
+// field and once, at the end of `n`'s scope (rule W9): see the `kif_wipe_nonce` call in the generated C.
+#[export]
+fn handoff(seed: u8) -> u32 {
+    let n: nonce = nonce { bytes: [seed; 16], counter: 9 };
+    take(n)
+}

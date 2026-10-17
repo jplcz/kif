@@ -13,8 +13,8 @@ import pytest
 pytestmark = pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc not available")
 DEMO = Path(__file__).resolve().parent.parent / "examples" / "secure-wipe"
 EXPECTED_ERRORS = ["KIFW001", "KIFW001", "KIFW002", "KIFW003", "KIFW004", "KIFW004", "KIFW004", "KIFW005"]
-WIPES_IN_IR = 5  # step: the `wipes` pass inserts them
-WIPES_IN_C = 9  # step: C emission
+WIPES_IN_IR = 6  # step: the `wipes` pass inserts them
+WIPES_IN_C = 13  # step: C emission
 
 
 def load():

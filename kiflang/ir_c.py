@@ -938,6 +938,13 @@ class _Emit:
             raise LowerError(f"KIFW006: {w.local.name!r} is an array parameter, which C passes as a pointer: its storage is the caller's, so it cannot be wiped here")
         lw.uses_wipe = True
         lw.uses_wipe_volatile |= w.volatile
+        if w.local.secure_struct and not w.path:
+            line = w.site.range.start.line + 1 if w.site is not None else 0
+            sname = self.sname(w.local.type)
+            cond = f"if (!{self.flags[w.local]}) " if w.local in self.flags else ""
+            self.put(f"/* kif: secure wipe: {self.names[w.local]} ({w.ty}), {w.why.replace('*/', '* /')}: the value was moved out, the bytes stay, field by field ({lw.file}:{line or '?'}) */")
+            self.put(f"{cond}kif_wipe_{sname}(&{self.names[w.local]});")
+            return
         line = w.site.range.start.line + 1 if w.site is not None else 0
         what = self.names[w.local] + w.path
         self.put(f"/* kif: secure wipe{' (volatile)' if w.volatile else ''}: {what} ({w.ty}), {w.why.replace('*/', '* /')} ({lw.file}:{line or '?'}) */")
@@ -1676,7 +1683,7 @@ class _Emit:
 
                 raise LowerError(f"KIFT012: the C output of {fn.name}() broke the constant-time shape: " + "; ".join(bad))
         wanted = sum(1 for _, i in fn.instrs() if isinstance(i, ir.Wipe))
-        kept = len(re.findall(rf"\b{re.escape(lw.t.wipe().macro)}(?:_VOLATILE)?\(&", "\n".join(rendered)))
+        kept = len(re.findall(rf"\b(?:{re.escape(lw.t.wipe().macro)}(?:_VOLATILE)?|kif_wipe_\w+)\(&", "\n".join(rendered)))
         if wanted != kept:
             from .lower_c import LowerError
 

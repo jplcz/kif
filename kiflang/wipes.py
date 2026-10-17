@@ -78,7 +78,7 @@ def copies(fn: ir.Function) -> List[Tuple[ir.Store, ir.Local]]:
 def analyze(fn: ir.Function, cfg: ir.CFG) -> int:
     """Insert the wipes of `fn`; returns how many."""
     secure = [l for l in fn.locals if l.wipe]
-    if not secure:
+    if not secure and not any(l.secure_struct for l in fn.locals):
         return 0
     declared = {i.local: i.site for _, i in fn.instrs() if isinstance(i, ir.Live)}
     inserts: Dict[ir.Block, List[Tuple[int, ir.Wipe]]] = {}
@@ -136,6 +136,12 @@ def analyze(fn: ir.Function, cfg: ir.CFG) -> int:
                     edges.setdefault((b, s), []).append(_wipe(loc, "end of live range (branch not using it)", b.term.site))
         if loc.param and not live_in[fn.entry]:
             at(fn.entry, 0, _wipe(loc, "entry: unused parameter"))
+
+    moved = {i.local for _, i in fn.instrs() if isinstance(i, ir.Move) and i.local.secure_struct}
+    for b in cfg.rpo:
+        for n, i in enumerate(b.instrs):
+            if isinstance(i, ir.Dead) and i.local in moved and i.drop != "drop":
+                at(b, n, _wipe(i.local, "moved-from slot", i.site))
 
     nid = max(b.id for b in fn.blocks) + 1
     for (b, s), ws in edges.items():
