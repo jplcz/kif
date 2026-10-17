@@ -388,6 +388,22 @@ class Project(Instr):
 
 
 @dataclass(eq=False)
+class Barrier(Instr):
+    """A speculation barrier (docs/kif-taint.md section 7). `kind` is `fence` (a statement: no later instruction runs speculatively
+    before every earlier branch resolved) or `value` (`dst` is `a`, opaque to later speculation). It changes timing, not state, so the
+    borrow check and the provers keep their facts across it; `elide` and the folders never remove or move it. `why` is empty for a
+    `spec::` call the author wrote and names the rule and the source construct for one the compiler inserted; the code generator
+    prints it as an audit comment."""
+    kind: str
+    dst: Optional[Temp] = None
+    a: Optional[Value] = None
+    why: str = ""
+
+    def uses(self) -> List[Value]:
+        return [] if self.a is None else [self.a]
+
+
+@dataclass(eq=False)
 class Opaque(Instr):
     """A value the IR does not model: a macro, a closure, a `cfg` condition.
     `what` names it (what is left: closures, macros, `cfg` conditions, the borrow of a place that is not a local); `args` are the values it was computed from. It has no effect on any slot (a mutation inside it shows up as
@@ -658,6 +674,8 @@ def _instr(i: Instr) -> str:
         return f"{d}pattern {i.base} ~ {i.pattern}"
     if isinstance(i, Project):
         return f"{d}project {i.base}{('.' + i.path.lstrip('.')) if i.path else ''}"
+    if isinstance(i, Barrier):
+        return f"{d}barrier {i.kind}" + (f" {i.a}" if i.a is not None else "") + (f"  // implicit: {i.why}" if i.why else "")
     if isinstance(i, Opaque):
         return f"{d}opaque {i.what}" + (f"({', '.join(str(a) for a in i.args)})" if i.args else "")
     return repr(i)
@@ -1498,6 +1516,14 @@ class _Builder:
         return v
 
     def e_Call(self, e: ast.Call) -> Optional[Value]:
+        if getattr(e, "spec", None):   # `spec::barrier()` / `spec::value(x)`: not calls, an instruction of their own
+            if e.spec == "barrier":
+                self.emit(Barrier("fence", site=e))
+                return None
+            a = self.expr(e.args[0])
+            t = self.temp(self.tys(e))
+            self.emit(Barrier("value", t, a, site=e))
+            return t
         if getattr(e, "ct", None):   # a compiler-synthesized `ct::` intrinsic: never resolved to a declaration
             args = [self.expr(a) for a in e.args]
             t = self.temp(self.tys(e))

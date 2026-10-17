@@ -489,7 +489,7 @@ class _Walk:
         args = None
         for t in taints:
             args = _join(args, t)
-        if getattr(e, "ct", None):   # a compiler-synthesized `ct::` intrinsic: pure, no declaration to check arguments against
+        if getattr(e, "ct", None) or getattr(e, "spec", None):   # a compiler-synthesized `ct::` / `spec::` intrinsic: pure, no declaration to check arguments against
             return self.result_of(name, attrs, args, e.range)
         c = e.callee
         node = self.direct(c)
@@ -747,7 +747,7 @@ def _suggest(bc, f) -> None:
     """KIFT011 (a suggestion, never an error): an `#[untaint]` body that builds its result from comparisons or masks."""
     by_hand = False
     for n in astutil.walk(f.body):
-        if isinstance(n, ast.Call) and (getattr(n, "ct", None) or (isinstance(n.callee, ast.PathExpr) and n.callee.segments[0].name == "spec")):
+        if isinstance(n, ast.Call) and (getattr(n, "ct", None) or getattr(n, "spec", None)):
             return
         if isinstance(n, ast.Binary) and n.op in ("<", "<=", ">", ">=", "==", "!="):
             by_hand = True

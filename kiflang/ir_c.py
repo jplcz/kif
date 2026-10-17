@@ -589,6 +589,8 @@ class _Emit:
             if "{" in i.text:
                 raise _Bail("format string")
             self.strs[i.dst.id] = i.text
+        elif isinstance(i, ir.Barrier):
+            self.barrier(i)
         elif isinstance(i, ir.Call):
             if i.reason:
                 self.put(f"/* kif: untaint: {i.callee}(): {i.reason.replace('*/', '* /')} ({lw.file}:{line}) */")
@@ -919,6 +921,32 @@ class _Emit:
         if isinstance(t, ast.PathType) and t.text in self.lw.enums:
             return "struct"  # not a scalar: no literal takes its type from here
         return None
+
+    def barrier(self, b: ir.Barrier) -> None:
+        """A speculation barrier as the target's `taint.fence` / `taint.barrier` snippet, always preceded by an audit comment saying
+        why it is there. A target without the snippet is an error, never a silent no-op (docs/kif-taint.md section 7)."""
+        from .lower_c import LowerError
+
+        lw = self.lw
+        line = b.site.range.start.line + 1 if b.site is not None else 0
+        which = "implicit" if b.why else "explicit"
+        why = (b.why or ("spec::value(..)" if b.kind == "value" else "spec::barrier()")).replace("*/", "* /")
+        if b.kind == "fence":
+            text = lw.t.taint("fence")
+            if text is None:
+                raise LowerError(f"target {lw.t.name!r} has no taint.fence, but this code needs a speculation barrier: add it to the target's `taint` section")
+            self.put(f"/* kif: spec barrier ({which}): {why}, {lw.file}:{line} */")
+            self.put(f"{text};")
+            return
+        if b.dst is None or b.a is None or b.dst.ty not in self.lw_bits() and b.dst.ty != "bool":
+            raise LowerError(f"a speculation barrier on a value of type {getattr(b.dst, 'ty', '?')} is not lowered yet (scalars only): barrier its scalar fields one by one")
+        t = f"kif_t{b.dst.id}"
+        text = lw.t.taint("barrier", v=t)
+        if text is None:
+            raise LowerError(f"target {lw.t.name!r} has no taint.barrier, but this code needs a speculation barrier: add it to the target's `taint` section")
+        self.put(f"/* kif: spec value barrier ({which}): {why}, {lw.file}:{line} */")
+        self.put(f"{t} = {self.val(b.a, b.dst.ty)};")
+        self.put(f"{text};")
 
     def ct_call(self, c: ir.Call) -> None:
         """A `ct::` intrinsic as branch-free integer arithmetic on the unsigned type of the same width, then the target's value

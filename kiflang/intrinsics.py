@@ -28,7 +28,18 @@ CT: Dict[str, Intrinsic] = {
                        "`untaint!(\"reason\", ct::clamp(x, n))`.", "clamp(${1:x}, ${2:n})"),
 }
 
+SPEC: Dict[str, Intrinsic] = {
+    "barrier": Intrinsic(0, "fn barrier()", "Statement: no later instruction runs speculatively before every earlier branch has resolved.", "barrier()"),
+    "value": Intrinsic(1, "fn value(x: T) -> T", "Returns `x`, opaque to later speculation: a dependent access waits until `x` is architecturally known. "
+                       "A struct, tuple or array gets one barrier per field.", "value(${1:x})"),
+}
+
+# namespace -> its table
+TABLES: Dict[str, Dict[str, Intrinsic]] = {"ct": CT, "spec": SPEC}
+
+SPEC_ARITY: Dict[str, int] = {k: v.arity for k, v in SPEC.items()}
+
 CT_ARITY: Dict[str, int] = {k: v.arity for k, v in CT.items()}
 
-# namespaces the compiler owns (`spec` joins them with the speculation barriers of stage 6); a user module of the same name wins
-NAMESPACES: Tuple[str, ...] = ("ct",)
+# namespaces the compiler owns; a user module of the same name wins
+NAMESPACES: Tuple[str, ...] = ("ct", "spec")

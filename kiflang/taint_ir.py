@@ -119,6 +119,8 @@ class _Flow:
             if i.kind == "repeat" and len(i.args) == 2:
                 self.sink(i.args[1], i.site, "KIFT002", "is used as an array length", report)
             self.define(i, self.any(i.args))
+        elif isinstance(i, ir.Barrier):
+            self.define(i, self.of(i.a) if i.a is not None else None)   # a barrier does not clean the value: only an #[untaint] function does
         elif isinstance(i, (ir.Global, ir.Str, ir.Cell)):
             self.define(i, None)
         elif isinstance(i, (ir.Unary, ir.Binary, ir.Cast, ir.Len, ir.PatTest, ir.Project, ir.Opaque)):

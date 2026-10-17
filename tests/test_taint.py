@@ -457,3 +457,58 @@ def test_ir_agrees_with_the_walker_on_sinks():
         assert set(want) <= set(got), (s, want, got)
         if not want:
             assert got == [], s
+
+
+# -- stage 6: spec::barrier / spec::value
+
+SPEC_SRC = "fn f(a: u32, b: u32) -> u32 { spec::barrier(); let v = spec::value(a + b); v }\n"
+
+
+def test_spec_calls_type_check_and_run():
+    from kiflang import interp  # noqa: F401
+
+    assert codes(SPEC_SRC) == []
+    assert codes("fn f() { spec::value(1, 2); }") == ["KIFP011"]
+    assert codes("fn f() { spec::barrier(3); }") == ["KIFP011"]
+
+
+def test_spec_barrier_becomes_an_ir_instruction():
+    from kiflang import passes
+
+    from kiflang import ir as kir
+
+    text = kir.dump(passes.run_module(analyze("t.kif", SPEC_SRC).tree, []).module.functions[0])
+    assert "barrier fence" in text and "barrier value" in text
+
+
+def test_spec_value_does_not_untaint():
+    assert ir_codes(fn("t[spec::value(n)]")) == ["KIFT002"]
+    assert codes(fn("t[spec::value(n)]")) == ["KIFT002"]
+
+
+def test_spec_is_allowed_in_a_pure_sanitizer():
+    assert codes(san("spec::barrier(); spec::value(x & 3)")) == []
+
+
+def test_spec_names_complete_and_help():
+    from kiflang import complete
+    src = "fn f() { spec:: }\n"
+    labels = {i["label"] for i in complete.complete(analyze("t.kif", src), src, 0, 15, [], [])}
+    assert labels == {"barrier", "value"}
+    src = "fn f(x: u32) { spec::value() }\n"
+    r = complete.signature_help(analyze("t.kif", src), src, 0, src.index(") }"))
+    assert r["signatures"][0]["label"] == "fn spec::value(x: T) -> T"
+
+
+def test_spec_value_in_c_has_the_audit_comment_and_barrier():
+    from kiflang import lower_c, target
+
+    t = target.load("c")
+    t.data["taint"]["fence"] = '__asm__ volatile ("")'
+    files = lower_c.lower(analyze("t.kif", SPEC_SRC, cfg_env=t.cfg_env()), t, "t")
+    text = files["t_proc.c"]
+    assert "kif: spec barrier (explicit): spec::barrier()" in text and "kif: spec value barrier (explicit): spec::value(..)" in text
+    t.data["taint"] = {}
+    import pytest
+    with pytest.raises(lower_c.LowerError, match="taint.fence"):
+        lower_c.lower(analyze("t.kif", SPEC_SRC, cfg_env=t.cfg_env()), t, "t")

@@ -123,7 +123,7 @@ def loads_ast(data: Any) -> Any:
 
 # ------------------------------------------------------------------ IR
 
-_INSTRS: Dict[str, Type] = {c.__name__: c for c in (ir.Load, ir.Move, ir.Store, ir.Live, ir.Dead, ir.Release, ir.Cell, ir.Unary, ir.Binary, ir.Cast, ir.Call, ir.Len, ir.Test, ir.Check, ir.Access, ir.Borrow, ir.Clobber, ir.Str, ir.Global, ir.Make, ir.PatTest, ir.Project, ir.Opaque)}
+_INSTRS: Dict[str, Type] = {c.__name__: c for c in (ir.Load, ir.Move, ir.Store, ir.Live, ir.Dead, ir.Release, ir.Cell, ir.Unary, ir.Binary, ir.Cast, ir.Call, ir.Len, ir.Test, ir.Check, ir.Access, ir.Borrow, ir.Clobber, ir.Str, ir.Global, ir.Make, ir.PatTest, ir.Project, ir.Opaque, ir.Barrier)}
 _TERMS: Dict[str, Type] = {c.__name__: c for c in (ir.Jump, ir.Branch, ir.Return, ir.Unreachable)}
 
 

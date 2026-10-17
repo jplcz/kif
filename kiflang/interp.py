@@ -637,6 +637,8 @@ class Interp:
     def x_Call(self, e: ast.Call) -> Any:
         if getattr(e, "ct", None):
             return self.ct(e)
+        if getattr(e, "spec", None):   # a speculation barrier changes timing, not values
+            return self.val(e.args[0]) if e.args else UNIT
         f = self.ev(e.callee)
         targs = {k: self.rt(v) for k, v in getattr(e, "targs", {}).items()}
         return self.invoke(f, [self.val(a) for a in e.args], e, targs)

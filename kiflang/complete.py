@@ -30,7 +30,7 @@ from . import ast
 from . import lexer as lx
 from . import types as T
 from .astutil import doc_above, slice_text, walk
-from .intrinsics import CT, NAMESPACES
+from .intrinsics import CT, NAMESPACES, TABLES
 
 CK_METHOD, CK_FUNCTION, CK_FIELD, CK_MODULE, CK_STRUCT, CK_INTERFACE, CK_ENUM, CK_KEYWORD, CK_CONSTANT = 2, 3, 5, 9, 22, 8, 13, 14, 21
 CK_VARIABLE = 6
@@ -196,14 +196,14 @@ def _members(mod, tname: str) -> List[dict]:
     return items
 
 
-def _intrinsic_items() -> List[dict]:
+def _intrinsic_items(ns: str = "ct") -> List[dict]:
     return [{"label": n, "kind": CK_FUNCTION, "detail": i.signature, "documentation": {"kind": "markdown", "value": i.doc},
-             "insertText": i.snippet, "insertTextFormat": 2, "filterText": n} for n, i in sorted(CT.items())]
+             "insertText": i.snippet, "insertTextFormat": 2, "filterText": n} for n, i in sorted(TABLES[ns].items())]
 
 
 def _qualified(mod, parts: List[str]) -> List[dict]:
-    if parts == ["ct"] and "ct" not in mod.modules:
-        return _intrinsic_items()
+    if len(parts) == 1 and parts[0] in TABLES and parts[0] not in mod.modules:
+        return _intrinsic_items(parts[0])
     if parts == ["error"] and "error" not in mod.modules:
         from .target import ERROR_ERRNO
         return [{"label": n, "kind": CK_ENUM_MEMBER, "detail": f"error::  (errno {e})"} for n, e in sorted(ERROR_ERRNO.items())]
@@ -588,8 +588,8 @@ def signature_help(mod, text: str, line: int, col: int, analyze_fn=None) -> Opti
     if not m:
         return None
     path = m.group(1).split("::")
-    if len(path) == 2 and path[0] == "ct" and path[0] not in mod.modules and path[1] in CT:
-        return _intrinsic_help(path[1], commas)
+    if len(path) == 2 and path[0] in TABLES and path[0] not in mod.modules and path[1] in TABLES[path[0]]:
+        return _intrinsic_help(path[0], path[1], commas)
     found = None  # (module whose source holds the declaration, FnDecl)
     method = False
     pre = head[: m.start()].rstrip()
@@ -637,16 +637,16 @@ def signature_help(mod, text: str, line: int, col: int, analyze_fn=None) -> Opti
     return {"signatures": [info], "activeSignature": 0, "activeParameter": min(commas, max(len(labels) - 1, 0))}
 
 
-def _intrinsic_help(name: str, commas: int) -> dict:
-    i = CT[name]
-    label = i.signature.replace("fn ", f"fn ct::", 1)
+def _intrinsic_help(ns: str, name: str, commas: int) -> dict:
+    i = TABLES[ns][name]
+    label = i.signature.replace("fn ", f"fn {ns}::", 1)
     head = label.index("(") + 1
     params, pos = [], head
-    for p in label[head: label.rindex(")")].split(", "):
+    for p in [x for x in label[head: label.rindex(")")].split(", ") if x]:
         params.append({"label": [pos, pos + len(p)]})
         pos += len(p) + 2
     return {"signatures": [{"label": label, "parameters": params, "documentation": {"kind": "markdown", "value": i.doc}}],
-            "activeSignature": 0, "activeParameter": min(commas, len(params) - 1)}
+            "activeSignature": 0, "activeParameter": max(0, min(commas, len(params) - 1))}
 
 
 # -- completionItem/resolve

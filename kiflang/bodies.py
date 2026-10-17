@@ -66,7 +66,7 @@ from . import cells
 from . import cfg
 from . import places
 from . import taint
-from .intrinsics import CT_ARITY   # the compiler-synthesized `ct::` intrinsics (docs/kif-taint.md section 7)
+from .intrinsics import CT_ARITY, SPEC_ARITY   # the compiler-synthesized `ct::` intrinsics (docs/kif-taint.md section 7)
 from . import cmode
 from . import diagnostics as dg
 from . import methods as M
@@ -1264,10 +1264,27 @@ class BodyChecker:
         e.ct = name   # read by taint.py, ir.py and interp.py
         return BOOL if name in ("eq", "lt") else Ty("usize") if name == "mask" else (j or UNKNOWN)
 
+    def spec_call(self, e: ast.Call) -> Optional[Ty]:
+        """A call of `spec::barrier()` or `spec::value(x)`, the speculation barriers (docs/kif-taint.md section 7)."""
+        c = e.callee
+        if not (isinstance(c, ast.PathExpr) and len(c.segments) == 2 and c.segments[0].name == "spec" and c.segments[1].name in SPEC_ARITY
+                and self.find("spec")[0] is None and self.sym_value(["spec", c.segments[1].name]) is None):
+            return None
+        name = c.segments[1].name
+        got = [self.value(a) for a in e.args]
+        if len(got) != SPEC_ARITY[name]:
+            self.d.append(dg.error(e.range, "KIFP011", f"'spec::{name}' takes {SPEC_ARITY[name]} argument(s), found {len(got)}"))
+            return UNKNOWN
+        e.spec = name   # read by taint.py, ir.py and interp.py
+        return got[0] if name == "value" else UNIT
+
     def e_Call(self, e: ast.Call) -> Ty:
         ct = self.ct_call(e)
         if ct is not None:
             return ct
+        sp = self.spec_call(e)
+        if sp is not None:
+            return sp
         ft = self.expr(e.callee)
         got = [self.value(a) for a in e.args]
         if isinstance(e.callee, ast.PathExpr) and len(e.callee.segments) == 1 and e.callee.segments[0].name in _RESULT_NAMES \

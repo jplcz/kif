@@ -476,8 +476,8 @@ where it stands.
 
 **Lowering.** Per target, in order of preference:
 
-1. **reloco**: `reloco::spec_barrier()` and `reloco::spec_value(x)`, added to `../reloco` as the base runtime primitive, so one
-   implementation covers every architecture reloco supports.
+1. **reloco** (the C++ backend, when it exists): `reloco::nospec::barrier()` for the statement form, which `../reloco` already has for every
+   architecture it supports; the value form needs a `reloco::nospec::value(x)` there, added together with that backend (not before: nothing calls it).
 2. **plain C** when reloco is not in the build: the target's `taint.fence` / `taint.barrier` snippets, for example
    `__asm__ volatile ("lfence")` on x86, `__builtin_speculation_safe_value(x)` on GCC 9 and later, or an explicitly declared no-op
    on a target that does not speculate (stated in the target, never assumed).
@@ -574,8 +574,12 @@ path is a place a reviewer sees, and the set is small.
    barrier after each result, an audit comment before it, and a `LowerError` naming `taint.barrier` when the target has none. Tests compile
    with gcc and compare with the interpreter, exhaustively on 8 bits, and check the comment and barrier in the text. `nospec` and `fence`
    are schema-only until stage 6 uses them.
-6. **Barriers.** `spec::barrier` / `spec::value` in the language, `Barrier` in the IR (with `IR_VERSION` bump), implicit barriers for
-   `?` and tainted loads, reloco primitive and plain-C lowering, a target error when no lowering exists.
+6. **Barriers.** Done in part: `spec::barrier()` and `spec::value(x)` are compiler intrinsics like `ct::` (typed in `bodies.spec_call`, KIFP011 on a wrong
+   argument count, interpreted as identity), lowered to the new IR instruction `Barrier(kind, dst, a, why)` (serialized; the `IR_VERSION`
+   bump to 2 already covers it), printed by `kif ir`, pure in `#[untaint]` bodies, completed and signature-helped in the editor. `spec::value`
+   passes taint through (only an `#[untaint]` function cleans). The C backend emits `taint.fence` / `taint.barrier` with an audit comment
+   (`explicit`, or `implicit` plus the reason when `why` is set) and refuses with an error naming the missing key. Not yet: implicit barriers
+   for `?` and tainted element loads, and per-field barriers for aggregates (a non-scalar `spec::value` is a lowering error, not a silent no-op).
 7. **Reasons.** `untaint!("reason", f(..))`, `KIFT010`, `Call.reason` in the IR and the audit comment in the C output (done with stage 1).
 8. **Policy and tooling.** `taint.exports`, `taint.sinks`, mitigation lists, purity check `KIFT009`, hover, lens.
 
