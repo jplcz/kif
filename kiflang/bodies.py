@@ -62,7 +62,7 @@ from dataclasses import dataclass, field, replace
 from typing import Dict, List, Optional
 
 from . import ast
-from . import cells
+from . import cells, wipe
 from . import cfg
 from . import places
 from . import taint, vendor
@@ -331,6 +331,9 @@ class BodyChecker:
                     break
 
     def item(self, it, outer_generics: List[ast.GenericParam]) -> None:
+        wipe.check_item_attrs(self, it)
+        if isinstance(it, ast.StructDecl):
+            wipe.check_struct(self, it)
         if isinstance(it, ast.FnDecl):
             self.fn(it, outer_generics)
         elif isinstance(it, ast.StaticDecl):
@@ -405,6 +408,8 @@ class BodyChecker:
             self.generics.pop()
 
     def fn(self, f, outer_generics: List[ast.GenericParam]) -> None:
+        if isinstance(f, ast.FnDecl):
+            wipe.check_fn(self, f)
         if f.body is None:
             if self.mod.header is None and isinstance(f, ast.FnDecl):
                 self.d.append(dg.error(f.name.range, "KIFP017", f"function {f.name.text!r} has no body "
@@ -908,6 +913,7 @@ class BodyChecker:
             loans = self.loans_of(s.init, got) if s.init is not None else ()
             v = _Var(mut=s.mut, ty=var_ty, deferred=s.init is None, init=s.init is not None, loans=loans)
             self.declare(s.name, v)
+            wipe.check_let(self, s, var_ty)
             if self.is_guard(var_ty) and s.name.text != "_" and not self.dead:
                 v.guard = True
                 self.frames[-1].guards += 1

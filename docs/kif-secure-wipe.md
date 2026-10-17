@@ -404,7 +404,7 @@ keeps the IR hash target-independent and the wipe policy in one place.
 | `KIFW001` | error | `#[secure_wipe]` on a variable or parameter of a non-trivial type (rule W3) | use plain data; make a secure struct and exempt the owned fields |
 | `KIFW002` | error | a `#[secure_wipe]` struct already has a `drop` (declared directly or in an `impl`; rule W4) | remove `#[secure_wipe]` and wipe by hand, or move the `drop` work into a wrapper type that owns a secure struct |
 | `KIFW003` | error | a field of a secure struct is not wipeable and not `#[wipe_exempt]` (rule W6) | tag it `#[wipe_exempt]` (a conscious decision) or change its type |
-| `KIFW004` | error | `#[wipe_exempt]` where it has no effect: on a field of a struct that is not secure, on a field that is wipeable and gains nothing, or on a variable outside a `#[secure_wipe]` function (rules W6, W8) | remove it |
+| `KIFW004` | error | a wipe attribute where it has no effect: `#[wipe_exempt]` on a field of a struct that is not secure, on a field that is wipeable and gains nothing, on a parameter, on a variable outside a `#[secure_wipe]` function, or on an item; `#[secure_wipe]` on a field or on an item that is not a `let`, `fn` or `struct` (rules W6, W8) | remove it |
 | `KIFW005` | error | a secure variable is shared: atomic, `#[tls]`, `#[per_cpu]`, or a static (rule W10.4) | keep the secret in a local owned by one thread of control |
 | `KIFW006` | error | the target has no way to wipe: `wipe.call` is unset and the compiler has no GCC-style asm barrier | set `wipe.call` in the target |
 | `KIFW007` | error | `secure_vector<T>` with a non-trivial element type, including a secure struct (rule W12.1) | use trivial elements; hold owning or secure values in a secure struct that has the vector as a field |
@@ -479,7 +479,7 @@ Stated plainly, because the feature is only useful when people know its limit:
 
 ## 12. Stages
 
-1. **Attributes and checks.** Parse `#[secure_wipe]` on `let`, `fn` and `struct`, `#[wipe_exempt]` on fields and `let`; `KIFW001`-`KIFW005`; trivial-type classification shared with KIFP180.
+1. **Attributes and checks.** Parse `#[secure_wipe]` on `let`, `fn` and `struct`, `#[wipe_exempt]` on fields and `let`; `KIFW001`-`KIFW005`; trivial-type classification shared with KIFP180. **Done** (`kiflang/wipe.py`, `tests/test_wipe.py`): `#[secure_wipe] let` parses (destructuring lets are rejected); `KIFW005` is reported for statics (kif has no `atomic` type yet, the name check is ready for it); the classification is its own (`wipe.plain`), because KIFP180 asks a different question (all-zero validity).
 2. **Liveness and the `Wipe` instruction.** The IR instruction, the `wipes` pass (live ranges per slot, rule W1/W2/W8/W9), `Local.wipe`, IR text, IR hash and serialization.
 3. **Secure structs.** The synthesized `drop` (rule W4/W5), wiring into `drops`, the moved-from slot rule.
 3a. **`secure_vector<T>`.** (C backend; the reloco C++ type is a separate task in `../reloco`, section 10a.) The type, the overlay on the vector lowering, the wiping operations and drop, `KIFW007`/`KIFW008`/`KIFW103` (rule W12); tests that every growth, shrink and drop emits its wipe.

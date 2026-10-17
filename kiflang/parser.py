@@ -986,6 +986,14 @@ class _Parser:
         t = self.tok
         if self.eat(";"):
             return None
+        if self.at("#[") and self.let_attrs_ahead():
+            attrs = self.attributes()
+            if self.at_punct("(", 1):
+                self.fail("attributes cannot be applied to a destructuring let")
+            stmt = self.let()
+            stmt.attrs = attrs
+            stmt.range = span(attrs[0].range, stmt.range)
+            return stmt
         if self.at("#[") or (t.kind == IDENT and t.text in _STMT_ITEM_START and not self.at_punct("{", 1)):
             item = self.item(True)
             return ast.ItemStmt(item.range, item)
@@ -999,6 +1007,16 @@ class _Parser:
             semi = self.eat(";")
             return ast.ExprStmt(span(e.range, semi.range if semi else e.range), e, bool(semi))
         return self.finish_expr_stmt(self.expr())
+
+    def let_attrs_ahead(self) -> bool:
+        """Whether the `#[..]` groups at the cursor are followed by `let`."""
+        j = self.i
+        while self.toks[j].kind == PUNCT and self.toks[j].text == "#[":
+            close = self.matching(j)
+            if close is None:
+                return False
+            j = close + 1
+        return self.toks[j].kind == IDENT and self.toks[j].text == "let"
 
     def finish_expr_stmt(self, e: ast.Expr) -> ast.ExprStmt:
         if self.at(";"):

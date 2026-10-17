@@ -402,6 +402,7 @@ class Let(Node):
     mut: bool
     ty: Optional[Type] = None
     init: Optional[Expr] = None
+    attrs: List[Attribute] = field(default_factory=list)
 
 
 @dataclass
