@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 Jarosław Pelczar <jarek@jpelczar.com>
+#
+# SPDX-License-Identifier: BSD-2-Clause
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jplcz-kif"
+version = "0.1.0"
+description = "kif: interface definition language and generators for kobj interfaces (C++ and FreeBSD C)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "BSD-2-Clause" }
+dependencies = []
+
+# `kifc` is a placeholder that reports "code generation unavailable" until the backends are written.
+[project.scripts]
+kifc = "kiflang.kifc:main"
+kif = "kiflang.kif:main"
+kif-check = "kiflang.__main__:main"
+kif-mimport = "kiflang.mimport:main"
+kif-lsp = "kiflang.lsp:main"
+
+[tool.setuptools]
+packages = ["kiflang"]
+
+# kiflang/prelude/*.kif (reloco.kif, microfmt.kif) is the default sysroot and must ship with the package.
+[tool.setuptools.package-data]
+kiflang = ["prelude/*.kif", "prelude/*.kifm", "targets/*.json"]

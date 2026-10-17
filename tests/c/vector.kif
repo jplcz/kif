@@ -1,0 +1,34 @@
+// Stage 2b: vector<T> of scalars and structs on the target allocator: try_* operations, v[i], len, drop.
+struct pt { x: i32, y: i32 }
+fn fill(n: u32) -> result<u32> {
+    let mut v: vector<u32> = vector::try_create(2)?;
+    for i in 0..n { v.try_push(i * i)?; }
+    v.try_insert_at(0, 100)?;
+    v.try_erase_at(1)?;
+    v[0] += 1;
+    let mut t: u32 = 0;
+    for i in 0..v.len() { t += v[i]; }
+    ok(t)
+}
+fn grow() -> result<usize> {
+    let mut v: vector<u8> = vector::try_create(0)?;
+    v.try_resize(6)?;
+    v.try_pop()?;
+    let c = v.try_clone()?;
+    let n = c.len() + v.capacity();
+    let mut c2 = c;
+    v.clear();
+    ok(n)
+}
+fn pts() -> result<i32> {
+    let mut v: vector<pt> = vector::try_create(1)?;
+    v.try_push(pt { x: 1, y: 2 })?;
+    v.try_push(pt { x: 3, y: 4 })?;
+    let r = v[1].x + v[0].y;
+    ok(r)
+}
+fn bad() -> result<()> {
+    let mut v: vector<u8> = vector::try_create(0)?;
+    v.try_pop()?;
+    ok(())
+}

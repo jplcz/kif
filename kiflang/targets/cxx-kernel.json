@@ -1,0 +1,10 @@
+{
+  "format": "kif-target",
+  "version": 1,
+  "name": "cxx-kernel",
+  "description": "Freestanding C++ for a kernel on the reloco runtime, no kobj emitter. Derive it with `extends` for a concrete kernel.",
+  "extends": "cxx-user",
+  "hosted": false,
+  "includes": { "header": ["<stdint.h>", "<stddef.h>"] },
+  "features": { "floats": false }
+}

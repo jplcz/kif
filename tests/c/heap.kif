@@ -1,0 +1,22 @@
+// ptr<S>: a heap object. try_allocate runs S's try_construct_at on target-allocated memory; drop runs S's drop, then frees.
+struct node { v: u32, next: ptr<node>, label: str }
+impl node {
+    fn try_construct_at(mem: c_ptr<Self>, v: u32) -> result<()> {
+        unsafe { (*mem).v = v; (*mem).label = str::try_create("n")?; }
+        ok(())
+    }
+    fn get(&self) -> u32 { self.v }
+    fn set(&mut self, v: u32) { self.v = v; }
+}
+
+// try_construct_at starts from the S_init shell, so `next` is already null. Two nodes chained; dropping the head releases the tail through the `next` field.
+fn chain() -> result<u32> {
+    let mut a: ptr<node> = ptr::try_allocate(default_allocator(), 5)?;
+    let b: ptr<node> = ptr::try_allocate(default_allocator(), 7)?;
+    a.set(a.get() + 1);
+    a.next = b;
+    let n = a.get() + (*a).next.get() + a.label.len() as u32;
+    let gone = a.is_null();
+    let leaf = a.next.get() == 7;
+    if gone || !leaf { ok(0) } else { ok(n) }
+}

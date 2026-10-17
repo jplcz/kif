@@ -1,0 +1,7 @@
+// Stage 1: functions, enums, constants, arrays, loops and match.
+enum mode: u8 { a, b = 5, c }
+const N: u32 = 4;
+fn sum(n: u32) -> u32 { let mut t: u32 = 0; for i in 0..n { t += i * N; } t }
+fn fact(n: u64) -> u64 { let mut r: u64 = 1; let mut i: u64 = 2; while i <= n { r *= i; i += 1; } r }
+fn pick(m: mode, v: i32) -> i32 { match m { mode::a => v / 2, mode::b if v > 3 => -v, _ => v << 1 } }
+fn arr(k: usize) -> u8 { let mut a: [u8; 4] = [1, 2, 3, 4]; a[k] += 200; a[k] }

@@ -1,0 +1,20 @@
+{
+  "format": "kif-target",
+  "version": 1,
+  "name": "freebsd-kernel",
+  "description": "FreeBSD kernel C. The only built-in target with a kobj emitter (makeobjops-compatible _if.h/_if.c).",
+  "extends": "c",
+  "standard": "gnu11",
+  "hosted": false,
+  "wrapping": "builtin",
+  "includes": { "header": ["<sys/param.h>", "<sys/systm.h>"] },
+  "panic": { "macro": "panic(\"kif: %s:%d: %s\", {file}, {line}, {msg})", "header": "<sys/systm.h>", "noreturn": true },
+  "assert": { "macro": "KASSERT({cond}, (\"kif: %s:%d: %s\", {file}, {line}, {msg}))", "header": "<sys/systm.h>" },
+  "alloc": { "malloc": "malloc({size}, M_KIF, M_WAITOK)", "zalloc": "malloc({size}, M_KIF, M_WAITOK | M_ZERO)", "realloc": "realloc({ptr}, {size}, M_KIF, M_WAITOK)", "free": "free({ptr}, M_KIF)", "header": "<sys/malloc.h>", "declare": "MALLOC_DECLARE(M_KIF);" },
+  "errno": { "style": "positive", "header": "<sys/errno.h>" },
+  "kobj": { "flavor": "freebsd", "header": "sys/kobj.h", "quote": "angle", "self_type": "device_t", "handles": { "device_t": "device_get_softc({handle})" }, "lifecycle": ["device_t"], "extra_headers": ["<sys/bus.h>"] },
+  "cells": { "tls": "freebsd", "per_cpu": "freebsd" },
+  "features": { "int64_div": true, "floats": false, "smp": true },
+  "cfg": { "os": "freebsd" },
+  "defines": { "KIF_FREEBSD_KERNEL": "1" }
+}

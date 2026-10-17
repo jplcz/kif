@@ -1,0 +1,15 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "kif: extension development host",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/kif-editor/vscode",
+        "${workspaceFolder}/kif-editor/samples"
+      ],
+      "preLaunchTask": "kif: npm install (extension client)"
+    }
+  ]
+}

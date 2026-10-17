@@ -1,0 +1,350 @@
+// kvdb: an in-memory key-value database driven by text commands. A stress program: a byte tokenizer and parser, an open-addressing
+// hash table that grows, an arena of keys, a dyn interface with two implementers, optional lookups, `?` error propagation, enums,
+// matches with guards, nested loops over slices, and a deterministic workload generator, all under the compiler's own checks.
+//
+//   SET key n     store n under key          GET key       look key up
+//   DEL key       remove key                 INCR key n    add n to the value of key (a missing key counts as 0)
+//   SUM           the sum of all values      COUNT         the number of keys
+
+enum op { set = 0, get = 1, del = 2, incr = 3, sum = 4, count = 5 }
+
+// ---------------------------------------------------------------- results go to a sink, so the database knows nothing of its caller
+#[ops]
+interface reply {
+    method put(&mut self, code: u32, value: u64);
+}
+
+// folds every reply into an FNV-1a style checksum
+struct checksum { h: u64 }
+impl reply for checksum {
+    fn put(&mut self, code: u32, value: u64) {
+        self.h = (self.h ^ (code as u64)) * 1099511628211;
+        self.h = (self.h ^ value) * 1099511628211;
+    }
+}
+
+// counts the replies per code (0 = ok, 1 = found, 2 = missing, 3 = number)
+struct tally { counts: [u32; 4], total: u64 }
+impl reply for tally {
+    fn put(&mut self, code: u32, value: u64) {
+        let slot = (code % 4) as usize;
+        self.counts[slot] += 1;
+        self.total += value;
+    }
+}
+
+// ---------------------------------------------------------------- tokenizer
+fn is_digit(c: u8) -> bool { c >= 48 && c <= 57 }
+fn is_space(c: u8) -> bool { c == 32 }
+
+// a word is a run of non-spaces: returns the index one past its end, `from` itself when there is none
+fn word_end(line: &[u8], from: usize) -> usize {
+    let mut i: usize = from;
+    while i < line.len() && !is_space(line[i]) { i += 1; }
+    i
+}
+
+fn skip_spaces(line: &[u8], from: usize) -> usize {
+    let mut i: usize = from;
+    while i < line.len() && is_space(line[i]) { i += 1; }
+    i
+}
+
+fn parse_number(line: &[u8], lo: usize, hi: usize) -> result<u64> {
+    if lo >= hi { return err(error::invalid_argument); }
+    let mut n: u64 = 0;
+    for i in lo..hi {
+        let c = line[i];
+        if !is_digit(c) { return err(error::invalid_argument); }
+        n = n * 10 + ((c - 48) as u64);
+    }
+    ok(n)
+}
+
+// the command word, case-sensitive: S E T, G E T, D E L, I N C R, S U M, C O U N T
+fn command_word(line: &[u8], lo: usize, hi: usize) -> result<op> {
+    let len = hi - lo;
+    if len == 3 {
+        let a = line[lo];
+        let b = line[lo + 1];
+        let c = line[lo + 2];
+        if a == 83 && b == 69 && c == 84 { return ok(op::set); }
+        if a == 71 && b == 69 && c == 84 { return ok(op::get); }
+        if a == 68 && b == 69 && c == 76 { return ok(op::del); }
+        if a == 83 && b == 85 && c == 77 { return ok(op::sum); }
+    }
+    if len == 4 && line[lo] == 73 && line[lo + 1] == 78 && line[lo + 2] == 67 && line[lo + 3] == 82 { return ok(op::incr); }
+    if len == 5 && line[lo] == 67 && line[lo + 1] == 79 && line[lo + 2] == 85 && line[lo + 3] == 78 && line[lo + 4] == 84 {
+        return ok(op::count);
+    }
+    err(error::invalid_argument)
+}
+
+// a parsed command: the key is a range of the line, so parsing allocates nothing
+struct cmd { kind: op, key_lo: usize, key_hi: usize, arg: u64 }
+
+fn parse(line: &[u8]) -> result<cmd> {
+    let w_lo = skip_spaces(line, 0);
+    let w_hi = word_end(line, w_lo);
+    let kind = command_word(line, w_lo, w_hi)?;
+    let mut c = cmd { kind: kind, key_lo: 0, key_hi: 0, arg: 0 };
+    let needs_key = match kind { op::sum => false, op::count => false, _ => true };
+    let mut at = w_hi;
+    if needs_key {
+        c.key_lo = skip_spaces(line, at);
+        c.key_hi = word_end(line, c.key_lo);
+        if c.key_lo == c.key_hi { return err(error::invalid_argument); }
+        at = c.key_hi;
+    }
+    let needs_arg = match kind { op::set => true, op::incr => true, _ => false };
+    if needs_arg {
+        let lo = skip_spaces(line, at);
+        let hi = word_end(line, lo);
+        c.arg = parse_number(line, lo, hi)?;
+        at = hi;
+    }
+    if skip_spaces(line, at) != line.len() { return err(error::invalid_argument); }
+    ok(c)
+}
+
+// ---------------------------------------------------------------- the table
+// state: 0 empty, 1 used, 2 deleted (a tombstone keeps probe chains intact)
+struct entry { off: usize, len: usize, hash: u32, state: u8, value: u64 }
+
+struct table { slots: vector<entry>, arena: vector<u8>, used: usize, tombs: usize }
+
+fn hash_bytes(b: &[u8]) -> u32 {
+    let mut h: u32 = 2166136261;
+    for i in 0..b.len() { h = (h ^ (b[i] as u32)) * 16777619; }
+    h
+}
+
+fn same_bytes(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() { return false; }
+    for i in 0..a.len() { if a[i] != b[i] { return false; } }
+    true
+}
+
+// a table of `n` empty slots (n must be a power of two so that `hash & (n - 1)` picks a slot)
+fn empty_slots(n: usize) -> result<vector<entry>> {
+    let mut v: vector<entry> = vector::try_create(n)?;
+    for _i in 0..n { v.try_push(entry { off: 0, len: 0, hash: 0, state: 0, value: 0 })?; }
+    ok(v)
+}
+
+impl table {
+    fn try_create(n: usize) -> result<Self> {
+        let slots = empty_slots(n)?;
+        let arena: vector<u8> = vector::try_create(256)?;
+        ok(Self { slots: slots, arena: arena, used: 0, tombs: 0 })
+    }
+
+    fn key_of(&self, i: usize) -> &[u8] {
+        let e = &self.slots[i];
+        &self.arena[e.off..e.off + e.len]
+    }
+
+    // the slot holding `key`, if any: probe linearly from the hash until an empty slot
+    fn find(&self, key: &[u8], hash: u32) -> optional<usize> {
+        let mask = self.slots.len() - 1;
+        let mut i = (hash as usize) & mask;
+        let mut steps: usize = 0;
+        while steps <= mask {
+            let st = self.slots[i].state;
+            if st == 0 { return none(); }
+            if st == 1 && self.slots[i].hash == hash && same_bytes(self.key_of(i), key) { return some(i); }
+            i = (i + 1) & mask;
+            steps += 1;
+        }
+        none()
+    }
+
+    // rebuild into `n` slots: only live entries move, tombstones vanish
+    fn rehash(&mut self, n: usize) -> result<()> {
+        let mut fresh = empty_slots(n)?;
+        let mask = n - 1;
+        for e in &self.slots {
+            if e.state != 1 { continue; }
+            let mut i = (e.hash as usize) & mask;
+            while fresh[i].state != 0 { i = (i + 1) & mask; }
+            fresh[i].off = e.off;
+            fresh[i].len = e.len;
+            fresh[i].hash = e.hash;
+            fresh[i].state = 1;
+            fresh[i].value = e.value;
+        }
+        self.slots = fresh;
+        self.tombs = 0;
+        ok(())
+    }
+
+    fn set(&mut self, key: &[u8], value: u64) -> result<()> {
+        let hash = hash_bytes(key);
+        let found = self.find(key, hash);
+        if found.has_value() {
+            let i = *found.value();
+            self.slots[i].value = value;
+            return ok(());
+        }
+        // keep the load (live + deleted) under 3/4, growing or just cleaning as needed
+        if (self.used + self.tombs + 1) * 4 > self.slots.len() * 3 {
+            let n = if (self.used + 1) * 2 > self.slots.len() { self.slots.len() * 2 } else { self.slots.len() };
+            self.rehash(n)?;
+        }
+        let mask = self.slots.len() - 1;
+        let mut i = (hash as usize) & mask;
+        while self.slots[i].state == 1 { i = (i + 1) & mask; }
+        if self.slots[i].state == 2 { self.tombs -= 1; }
+        let off = self.arena.len();
+        for k in 0..key.len() { self.arena.try_push(key[k])?; }
+        self.slots[i].off = off;
+        self.slots[i].len = key.len();
+        self.slots[i].hash = hash;
+        self.slots[i].state = 1;
+        self.slots[i].value = value;
+        self.used += 1;
+        ok(())
+    }
+
+    fn get(&self, key: &[u8]) -> optional<u64> {
+        let found = self.find(key, hash_bytes(key));
+        match found {
+            Some(i) => some(self.slots[i].value),
+            None => none(),
+        }
+    }
+
+    fn remove(&mut self, key: &[u8]) -> bool {
+        let found = self.find(key, hash_bytes(key));
+        if !found.has_value() { return false; }
+        let i = *found.value();
+        self.slots[i].state = 2;
+        self.used -= 1;
+        self.tombs += 1;
+        true
+    }
+
+    fn total(&self) -> u64 {
+        let mut t: u64 = 0;
+        for e in &self.slots { if e.state == 1 { t += e.value; } }
+        t
+    }
+}
+
+// ---------------------------------------------------------------- executing a line
+fn exec(db: &mut table, line: &[u8], out: &mut dyn reply) -> result<()> {
+    let c = parse(line)?;
+    let key: &[u8] = &line[c.key_lo..c.key_hi];
+    match c.kind {
+        op::set => { db.set(key, c.arg)?; out.put(0, c.arg); }
+        op::get => {
+            let v = db.get(key);
+            if v.has_value() { out.put(1, *v.value()); } else { out.put(2, 0); }
+        }
+        op::del => { if db.remove(key) { out.put(1, 0); } else { out.put(2, 0); } }
+        op::incr => {
+            let old = db.get(key);
+            let cur = old.value_or(0);
+            db.set(key, cur + c.arg)?;
+            out.put(3, cur + c.arg);
+        }
+        op::sum => out.put(3, db.total()),
+        op::count => out.put(3, db.used as u64),
+    }
+    ok(())
+}
+
+// ---------------------------------------------------------------- the workload: a linear congruential generator writes lines
+fn next(state: u32) -> u32 { state * 1664525 + 1013904223 }
+
+// writes `n` in decimal at `pos`, returns the position after it
+fn put_number(buf: &mut [u8], pos: usize, n: u64) -> usize {
+    let mut digits: [u8; 20] = [0; 20];
+    let mut count: usize = 0;
+    let mut rest = n;
+    loop {
+        digits[count] = 48 + ((rest % 10) as u8);
+        count += 1;
+        rest = rest / 10;
+        if rest == 0 { break; }
+    }
+    let mut at = pos;
+    while count > 0 {
+        count -= 1;
+        buf[at] = digits[count];
+        at += 1;
+    }
+    at
+}
+
+fn put_text(buf: &mut [u8], pos: usize, text: &[u8]) -> usize {
+    for i in 0..text.len() { buf[pos + i] = text[i]; }
+    pos + text.len()
+}
+
+// the command words, as byte arrays (a slice is made from an array variable, not from a literal)
+fn word(buf: &mut [u8], pick: u32) -> usize {
+    let w_set: [u8; 4] = [83, 69, 84, 32];
+    let w_get: [u8; 4] = [71, 69, 84, 32];
+    let w_del: [u8; 4] = [68, 69, 76, 32];
+    let w_incr: [u8; 5] = [73, 78, 67, 82, 32];
+    let w_sum: [u8; 3] = [83, 85, 77];
+    let w_bogus: [u8; 5] = [66, 79, 71, 85, 83];
+    match pick {
+        0 | 1 | 2 | 3 | 4 => put_text(buf, 0, &w_set),
+        5 | 6 | 7 | 8 => put_text(buf, 0, &w_get),
+        9 | 10 => put_text(buf, 0, &w_del),
+        11 | 12 | 13 => put_text(buf, 0, &w_incr),
+        14 => put_text(buf, 0, &w_sum),
+        _ => put_text(buf, 0, &w_bogus),
+    }
+}
+
+// one line for the random number `r`: 1 in 16 is malformed, the rest are spread over the commands and 48 keys
+fn make_line(buf: &mut [u8], r: u32) -> usize {
+    let pick = (r >> 8) % 16;
+    let key = ((r >> 12) % 48) as u64;
+    let arg = ((r >> 4) % 1000) as u64;
+    let mut at = word(buf, pick);
+    if pick >= 14 { return at; }
+    buf[at] = 107;
+    at = put_number(buf, at + 1, key);
+    if pick <= 4 || (pick >= 11 && pick <= 13) {
+        buf[at] = 32;
+        at = put_number(buf, at + 1, arg);
+    }
+    at
+}
+
+struct report { checksum: u64, errors: u32, live: usize, slots: usize, sum: u64, counts: [u32; 4] }
+
+fn run(n: u32, start_slots: usize) -> result<report> {
+    let mut db = table::try_create(start_slots)?;
+    let mut sums = checksum { h: 14695981039346656037 };
+    let mut tl = tally { counts: [0, 0, 0, 0], total: 0 };
+    let mut errors: u32 = 0;
+    let mut state: u32 = 12345;
+    let mut buf: [u8; 48] = [0; 48];
+    for round in 0..n {
+        state = next(state);
+        let len = make_line(&mut buf, state);
+        let line: &[u8] = &buf[0..len];
+        // every line is answered twice: by the checksum and by the tally
+        match exec(&mut db, line, &mut sums) {
+            ok(_) => {}
+            err(_) => { errors += 1; continue; }
+        }
+        if round % 3 == 0 { exec(&mut db, line, &mut tl)?; }
+    }
+    let mut rep = report { checksum: sums.h, errors: errors, live: db.used, slots: db.slots.len(), sum: db.total(), counts: [0, 0, 0, 0] };
+    for i in 0..4 { rep.counts[i] = tl.counts[i]; }
+    ok(rep)
+}
+
+fn checksum_of(n: u32) -> result<u64> { let r = run(n, 8)?; ok(r.checksum) }
+fn errors_of(n: u32) -> result<u32> { let r = run(n, 8)?; ok(r.errors) }
+fn live_of(n: u32) -> result<usize> { let r = run(n, 8)?; ok(r.live) }
+fn slots_of(n: u32) -> result<usize> { let r = run(n, 8)?; ok(r.slots) }
+fn sum_of(n: u32) -> result<u64> { let r = run(n, 8)?; ok(r.sum) }
+// the starting size must not change the answer: only the table's shape differs
+fn checksum_from(n: u32, slots: usize) -> result<u64> { let r = run(n, slots)?; ok(r.checksum) }

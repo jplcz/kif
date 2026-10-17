@@ -1,0 +1,65 @@
+// optional<T>: some(x) / none(), has_value, value (panics when empty), value_or, reset; an owning element is dropped by itself.
+struct pt { x: i32, y: i32 }
+struct holder { name: optional<str>, n: optional<u32> }
+fn pick(x: u32) -> optional<u32> { if x > 1 { some(x * 2) } else { none() } }
+fn total(a: u32, b: u32) -> u32 {
+    let p: optional<u32> = pick(a);
+    let q: optional<u32> = pick(b);
+    let mut t: u32 = p.value_or(100) + q.value_or(1000);
+    if p.has_value() { t += *p.value(); }
+    t
+}
+fn mid(x: i32) -> optional<pt> { if x > 0 { some(pt { x: x, y: x + 1 }) } else { none() } }
+fn sumpt(x: i32) -> i32 { let o: optional<pt> = mid(x); if o.has_value() { o.value().x + o.value().y } else { -1 } }
+fn named(keep: bool) -> result<usize> {
+    let mut o: optional<str> = none();
+    if keep { o = some(str::try_create("hello")?); }
+    let mut n: usize = 0;
+    if o.has_value() { n = o.value().len(); }
+    if n == 5 { o.reset(); }
+    ok(n)
+}
+fn bad() -> u32 { let o: optional<u32> = none(); *o.value() }
+fn describe(x: u32) -> i32 {
+    let o: optional<u32> = pick(x);
+    match o { Some(v) => v as i32, None => -1 }
+}
+fn present(keep: bool) -> bool {
+    let o: optional<pt> = if keep { some(pt { x: 1, y: 2 }) } else { none() };
+    match o { Some(_) => true, None => false }
+}
+fn nonempty(keep: bool) -> result<bool> {
+    let mut o: optional<str> = none();
+    if keep { o = some(str::try_create("x")?); }
+    ok(match o { Some(_) => true, None => false })
+}
+fn tv(x: u32) -> result<u32> {
+    let o: optional<u32> = pick(x);
+    let r: &u32 = o.try_value()?;
+    ok(*r + 1)
+}
+// optional<Struct> as a field: the helper struct is emitted next to the holder; an owning element is dropped with it
+struct label { text: str }
+struct framed { p: optional<pt>, l: optional<label>, n: u32 }
+fn frame(x: i32, named: bool) -> result<framed> {
+    let mut f: framed = framed { p: some(pt { x: x, y: 1 }), l: none(), n: 2 };
+    if named { f.l = some(label { text: str::try_create("ab")? }); }
+    ok(f)
+}
+fn frame_sum(f: &framed) -> i32 {
+    let mut t: i32 = 0;
+    if f.p.has_value() { t += f.p.value().x; }
+    if f.l.has_value() { t += f.l.value().text.len() as i32; }
+    t
+}
+fn frame_total(x: i32, named: bool) -> result<i32> {
+    let f: framed = frame(x, named)?;
+    ok(frame_sum(&f))
+}
+// try_allocate with the default allocator is try_create (the target's allocator is the allocator)
+fn alloc_len() -> result<usize> {
+    let mut v: vector<u8> = vector::try_allocate(default_allocator(), 4)?;
+    v.try_push(1)?;
+    let s: str = str::try_allocate(default_allocator(), "abc")?;
+    ok(v.len() + s.len())
+}

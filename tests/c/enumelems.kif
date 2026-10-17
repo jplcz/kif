@@ -1,0 +1,21 @@
+// Enums as the elements of slices, vectors and optionals (the enum is defined before their helper structs).
+enum color { red = 0, green = 1, blue = 2 }
+
+struct palette { first: color, spare: optional<color> }
+
+fn count(v: &[color], c: color) -> u32 {
+    let mut t: u32 = 0;
+    for x in v { if *x == c { t = t + 1; } }
+    t
+}
+
+fn build() -> result<u32> {
+    let mut v: vector<color> = vector::try_create(4)?;
+    v.try_push(color::green)?;
+    v.try_push(color::blue)?;
+    v.try_push(color::green)?;
+    let r = v.try_at(1)?;
+    let blue = *r == color::blue;
+    let n = count(v.as_slice(), color::green);
+    if blue { ok(n + 10) } else { ok(n) }
+}

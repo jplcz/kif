@@ -1,0 +1,2 @@
+// refuse: a drop call by hand; the compiler drops values itself, so a manual drop would be a double free or a use after free.
+fn f() -> result<()> { let mut v: vector<u8> = vector::try_create(2)?; v.drop(); ok(()) }

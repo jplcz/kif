@@ -1,0 +1,24 @@
+{
+  "format": "kif-target",
+  "version": 1,
+  "name": "linux-kernel",
+  "description": "Linux kernel C (GNU C).",
+  "extends": "c",
+  "standard": "gnu11",
+  "hosted": false,
+  "wrapping": "builtin",
+  "types": {
+    "i8": "s8", "i16": "s16", "i32": "s32", "i64": "s64",
+    "u8": "u8", "u16": "u16", "u32": "u32", "u64": "u64",
+    "usize": "size_t", "isize": "ssize_t"
+  },
+  "includes": { "header": ["<linux/types.h>"], "source": ["<linux/kernel.h>", "<linux/bug.h>"] },
+  "panic": { "macro": "do { pr_emerg(\"kif: %s:%d: %s\\n\", {file}, {line}, {msg}); BUG(); } while (0)", "header": "<linux/bug.h>", "noreturn": true },
+  "assert": { "macro": "WARN_ONCE(!({cond}), \"kif: %s:%d: %s\\n\", {file}, {line}, {msg})", "header": "<linux/bug.h>" },
+  "alloc": { "malloc": "kmalloc({size}, GFP_KERNEL)", "zalloc": "kzalloc({size}, GFP_KERNEL)", "realloc": "krealloc({ptr}, {size}, GFP_KERNEL)", "free": "kfree({ptr})", "header": "<linux/slab.h>" },
+  "errno": { "style": "negative", "header": "<linux/errno.h>" },
+  "cells": { "tls": "none", "per_cpu": "linux" },
+  "features": { "int64_div": false, "floats": false, "smp": true },
+  "cfg": { "os": "linux" },
+  "defines": { "KIF_LINUX_KERNEL": "1" }
+}

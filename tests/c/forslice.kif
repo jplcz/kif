@@ -1,0 +1,60 @@
+// `for x in <borrowed sequence>`: x is a reference to each element (`&T`, or `&mut T` through `&mut`).
+struct pt { a: u32 }
+
+fn sum(s: &[u32]) -> u32 {
+    let mut t: u32 = 0;
+    for x in s { t = t + *x; }
+    t
+}
+
+fn bump(s: &mut [u32]) { for x in s { *x = *x + 1; } }
+
+fn total(p: &[pt]) -> u32 {
+    let mut t: u32 = 0;
+    for q in p { t = t + q.a; }
+    t
+}
+
+// arrays: a sub-slice is bumped, the whole array doubled through a reborrow, then both views summed
+fn arrays(a: &mut [u32; 4]) -> u32 {
+    bump(&mut a[1..3]);
+    for x in &mut *a { *x = *x * 2; }
+    sum(&a[..])
+}
+
+// vectors are iterated through a borrow (`for x in v` would move it and is refused)
+fn vec(n: u32) -> result<u32> {
+    let mut v: vector<u32> = vector::try_create(4)?;
+    v.try_push(n)?;
+    v.try_push(n + 1)?;
+    for x in &mut v { *x = *x + 10; }
+    let mut t: u32 = 0;
+    for x in &v { t = t + *x; }
+    ok(t)
+}
+
+// as_slice() / as_mut_slice() borrow a whole array, vector or slice
+fn views(a: &mut [u32; 4]) -> u32 {
+    bump(a.as_mut_slice());
+    let s: &[u32] = a.as_slice();
+    let mut t: u32 = sum(s);
+    for x in a.as_slice() { t = t + *x; }
+    t
+}
+
+fn vec_view() -> result<u32> {
+    let mut v: vector<u32> = vector::try_create(2)?;
+    v.try_push(4)?;
+    v.try_push(5)?;
+    let w = v.as_slice();
+    ok(sum(w) + sum(v.as_slice()) - 9)
+}
+
+// try_at: a checked lookup; an index out of range is the error out_of_range instead of a trap
+fn at(i: usize) -> result<u32> {
+    let mut v: vector<u32> = vector::try_create(2)?;
+    v.try_push(3)?;
+    v.try_push(4)?;
+    let r = v.try_at(i)?;
+    ok(*r)
+}

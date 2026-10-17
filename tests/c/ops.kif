@@ -1,0 +1,42 @@
+// #[ops]: a plain interface is a table of function pointers plus a handle (object + table), for targets without kobj.
+#[ops]
+interface counter {
+    method get(&self) -> u32;
+    method add(&mut self, n: u32) -> u32;
+    // a default body works on the handle: it only uses the interface's own methods
+    method twice(&mut self, n: u32) -> u32 {
+        self.add(n);
+        self.add(n)
+    }
+}
+
+struct simple { n: u32 }
+struct doubler { n: u32, steps: u32 }
+
+impl counter for simple {
+    fn get(&self) -> u32 { self.n }
+    fn add(&mut self, n: u32) -> u32 { self.n += n; self.n }
+}
+impl counter for doubler {
+    fn get(&self) -> u32 { self.n }
+    fn add(&mut self, n: u32) -> u32 { self.steps += 1; self.n += n * 2; self.n }
+}
+
+fn run(c: &mut dyn counter) -> u32 {
+    c.add(3);
+    c.add(4);
+    c.get()
+}
+fn simple_total() -> u32 {
+    let mut s = simple { n: 1 };
+    run(&mut s)
+}
+fn doubler_total() -> u32 {
+    let mut d = doubler { n: 1, steps: 0 };
+    run(&mut d)
+}
+fn twice_total() -> u32 {
+    let mut d = doubler { n: 1, steps: 0 };
+    let c: &mut dyn counter = &mut d;
+    c.twice(1)
+}

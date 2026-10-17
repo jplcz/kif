@@ -1,0 +1,76 @@
+// Sample .kif file exercising every construct of the procedural language; open it to check highlighting.
+// A `//` run directly above a declaration is its documentation.
+#![target(freebsd)]
+namespace sample::sim;
+import "device.kif";
+use device::device;
+
+// Raw text copied into the generated files; the body is highlighted as C or C++.
+header(c) {
+#include <stddef.h>
+typedef struct foo { int x; } foo_t;
+}
+
+code(cxx) {
+static inline int twice(int v) { return v * 2; }
+}
+
+const LIMIT: u32 = 0x1000;
+const MASK: u8 = 0b1010_0101;
+type word = u64;
+
+#[flags]
+enum perm: u8 {
+    none = 0,
+    read = 1,
+    write = 2,
+    rw = 3,
+}
+
+struct hpet {
+    base: u64 = 0,
+    perms: perm,
+}
+
+extern "C" fn printf(fmt: str, ...) -> i32;
+
+// A kobj interface: dispatched through a class table, usable from C and `.m`.
+#[kobj, self(device_t), version(2)]
+interface mmio {
+    m_prolog {
+#define LOCK(obj) mtx_lock(&(obj)->lock)
+}
+    // Reads a register.
+    method read(off: u32, width: u8) -> u32;
+    static method make() -> i32;
+    method write(off: u32, value: u32) -> i32 { 0 }
+    before { }
+    method reset() -> ();
+}
+
+impl mmio for hpet {
+    fn read(&self, off: u32, width: u8) -> u32 { off + width as u32 }
+    fn make() -> i32 { 0 }
+    fn reset(&mut self) -> () { self.base = 0; }
+}
+
+private fn clamp(v: u32) -> u32 {
+    if v > LIMIT { LIMIT } else { v }
+}
+
+fn longest<'a>(a: &'a str, b: &'a str) -> &'a str { a }
+
+fn sum(n: u32) -> u32 {
+    let mut total = 0u32;
+    let mut i = 0;
+    while i < n {
+        total += i;
+        i += 1;
+    }
+    for k in 0..4 { total = total + k; }
+    match total {
+        0 => 1,
+        1 | 2 => 2,
+        _ => clamp(total),
+    }
+}

@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: 2026 Jarosław Pelczar <jarek@jpelczar.com>
+#
+# SPDX-License-Identifier: BSD-2-Clause
+
+name: kif VS Code extension
+
+# Python tests for the front end/LSP, plus packaging of the VS Code extension (the steps mirror release.yml).
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extension-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Test the kif front end and language server
+        run: |
+          python3 -m pip install pytest
+          python3 -m pytest tests -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Package the kif VS Code extension
+        working-directory: kif-editor/vscode
+        run: |
+          npm ci --omit=dev --no-audit --no-fund
+          node --check extension.js
+          mkdir server
+          cp -r ../../kiflang server/
+          npx --yes @vscode/vsce package --out "${{ runner.temp }}/kif-language.vsix"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kif-language-vsix
+          path: ${{ runner.temp }}/kif-language.vsix
+          if-no-files-found: error

@@ -1,0 +1,33 @@
+// Stage 2a: a struct with an impl block: try_create/try_clone (out-parameter first), try_construct_at, methods, drop, S_INIT.
+struct ring { private cap: usize = 0, count: usize = 0, data: [u8; 4] }
+impl ring {
+    fn try_create(cap: usize) -> result<Self> {
+        if cap > 4 { return err(error::invalid_argument); }
+        ok(Self { cap: cap, count: 0, data: [0, 0, 0, 0] })
+    }
+    fn try_construct_at(mem: c_ptr<Self>, cap: usize) -> result<()> { unsafe { (*mem).cap = cap; } ok(()) }
+    fn try_clone(&self) -> result<Self> {
+        let mut c = Self { cap: self.cap, count: self.count, data: [0, 0, 0, 0] };
+        for i in 0..self.count { c.data[i] = self.data[i]; }
+        ok(c)
+    }
+    fn push(&mut self, b: u8) -> result<()> {
+        if self.count >= self.cap { return err(error::allocation_failed); }
+        self.data[self.count] = b;
+        self.count += 1;
+        ok(())
+    }
+    fn sum(&self) -> u32 { let mut t: u32 = 0; for i in 0..self.count { t += self.data[i] as u32; } t }
+    fn take(self) -> usize { self.count }
+    fn magic() -> u32 { 42 }
+    fn drop(&mut self) { self.count = 0; }
+}
+fn demo(cap: usize) -> result<u32> {
+    let mut r = ring::try_create(cap)?;
+    r.push(7)?;
+    r.push(5)?;
+    let mut c = r.try_clone()?;
+    c.push(1)?;
+    let s = c.sum() + ring::magic();
+    ok(s)
+}

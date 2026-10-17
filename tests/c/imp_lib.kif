@@ -1,0 +1,30 @@
+// Library for imp_main: a constant, an enum, a plain struct, an owning struct, and functions. Has no driver of its own.
+const LIMIT: u32 = 10;
+enum color { red, green }
+struct point { x: i32, y: i32 }
+impl point {
+    fn sum(&self) -> i32 { self.x + self.y }
+}
+struct bag { items: vector<u32> }
+impl bag {
+    fn try_construct_at(mem: c_ptr<Self>, cap: usize) -> result<()> {
+        unsafe { (*mem).items = vector::try_create(cap)?; }
+        ok(())
+    }
+    fn add(&mut self, x: u32) -> result<()> { self.items.try_push(x)?; ok(()) }
+    fn count(&self) -> usize { self.items.len() }
+}
+fn make_bag(cap: usize) -> result<bag> { let v: vector<u32> = vector::try_create(cap)?; ok(bag { items: v }) }
+fn twice(a: i32) -> i32 { a * 2 }
+fn pick(c: color) -> i32 { match c { color::red => 1, color::green => 2 } }
+#[ops]
+interface counter {
+    method get(&self) -> u32;
+    method add(&mut self, n: u32) -> u32;
+}
+struct simple { n: u32 }
+impl counter for simple {
+    fn get(&self) -> u32 { self.n }
+    fn add(&mut self, n: u32) -> u32 { self.n += n; self.n }
+}
+fn bump(c: &mut dyn counter) -> u32 { c.add(5) }

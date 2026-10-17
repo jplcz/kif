@@ -1,0 +1,192 @@
+{
+  "name": "kif-language",
+  "displayName": "kif (kobj interface language)",
+  "description": "Syntax highlighting, snippets, diagnostics, completion, signature help, inlay hints, navigation and formatting for .kif files",
+  "version": "0.1.0",
+  "publisher": "jpelczar",
+  "license": "AGPL-3.0-or-later WITH LicenseRef-Kif-Output-Exception",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jplcz/kif.git",
+    "directory": "kif-editor/vscode"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "kif",
+        "aliases": [
+          "kif",
+          "KIF"
+        ],
+        "extensions": [
+          ".kif"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "kif",
+        "scopeName": "source.kif",
+        "path": "./syntaxes/kif.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.c": "c",
+          "meta.embedded.block.cpp": "cpp"
+        }
+      }
+    ],
+    "snippets": [
+      {
+        "language": "kif",
+        "path": "./snippets/kif.code-snippets"
+      }
+    ],
+    "configuration": {
+      "title": "kif",
+      "properties": {
+        "kif.server.python": {
+          "type": "string",
+          "default": "python3",
+          "description": "Python 3 interpreter used to run the kif language server."
+        },
+        "kif.server.includeDirs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra directories searched for import \"x.kif\" statements (after the importing file's directory)."
+        },
+        "kif.server.lint": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the kif lint rules (KIFLnnn) as diagnostics, with the levels of the nearest .kiflint."
+        },
+        "kif.server.lintConfig": {
+          "type": "string",
+          "default": "",
+          "description": "Lint configuration file; empty means the nearest .kiflint above the edited file."
+        },
+        "kif.server.baselines": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "ABI manifests (`kif manifest`) the baseline rules KIFL020-033 compare against; matched to files by name. Relative paths are relative to the server's working directory (the extension runs it in the repository checkout), so prefer absolute paths."
+        },
+        "kif.server.inlayHints.checks": {
+          "type": "string",
+          "enum": ["off", "kept", "all"],
+          "default": "kept",
+          "description": "Inlay hints for run-time checks: `kept` marks the checks that stay (⚠), `all` also marks the ones the provers drop (✓), `off` shows none."
+        },
+        "kif.server.inlayHints.delayMs": {
+          "type": "number",
+          "default": 400,
+          "minimum": 0,
+          "description": "Check hints are computed once the document has been quiet this long; while you type, a function you are editing shows none and the others keep theirs."
+        },
+        "kif.preview.target": {
+          "type": "string",
+          "default": "c",
+          "description": "Target for kif: Preview generated C: a built-in name (c, freebsd-kernel, linux-kernel, ...) or the path of a target .json file. A target with a kobj section also previews the kobj files."
+        },
+        "kif.server.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the language server (diagnostics, completion, hover, navigation, rename, inlay hints, formatting). Syntax highlighting works without it."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[kif]": {
+        "editor.tabSize": 2,
+        "editor.insertSpaces": true,
+        "editor.quickSuggestions": { "other": "on", "comments": "off", "strings": "on" },
+        "editor.suggest.snippetsPreventQuickSuggestions": false,
+        "editor.wordBasedSuggestions": "off",
+        "editor.semanticHighlighting.enabled": true,
+        "editor.inlayHints.enabled": "on",
+        "editor.parameterHints.enabled": true
+      }
+    },
+    "commands": [
+      {
+        "command": "kif.restartServer",
+        "title": "kif: Restart language server"
+      },
+      {
+        "command": "kif.previewFromM",
+        "title": "kif: Preview as .kif (from FreeBSD .m)",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "kif.convertMToKif",
+        "title": "kif: Convert FreeBSD .m to .kif file"
+      },
+      {
+        "command": "kif.previewC",
+        "title": "kif: Preview generated C (kifc backend)",
+        "icon": "$(symbol-class)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "kif.previewFromM",
+          "when": "resourceExtname == .m",
+          "group": "navigation"
+        },
+        {
+          "command": "kif.previewC",
+          "when": "resourceExtname == .kif",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "kif.convertMToKif",
+          "when": "resourceExtname == .m",
+          "group": "navigation"
+        },
+        {
+          "command": "kif.previewC",
+          "when": "resourceExtname == .kif"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "kif.previewFromM",
+          "when": "resourceExtname == .m"
+        },
+        {
+          "command": "kif.convertMToKif",
+          "when": "resourceExtname == .m"
+        },
+        {
+          "command": "kif.previewC",
+          "when": "resourceExtname == .kif"
+        }
+      ]
+    }
+  },
+  "main": "./extension.js",
+  "activationEvents": [
+    "onLanguage:kif",
+    "onCommand:kif.restartServer",
+    "onCommand:kif.previewFromM",
+    "onCommand:kif.convertMToKif",
+    "onCommand:kif.previewC"
+  ],
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}

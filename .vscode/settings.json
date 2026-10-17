@@ -1,0 +1,10 @@
+{
+  "files.associations": {
+    "*.kif": "kif"
+  },
+  "[kif]": {
+    "editor.tabSize": 2,
+    "editor.insertSpaces": true,
+    "editor.formatOnSave": true
+  }
+}

@@ -1,0 +1,542 @@
+// SPDX-FileCopyrightText: 2026 Jarosław Pelczar <jarek@jpelczar.com>
+//
+// SPDX-License-Identifier: BSD-2-Clause
+
+// The kif prelude (docs/kif-proc-language.md 4.10). Unlike every other file this one is GLOBAL: it has no
+// namespace, its names are visible in every file without `import` or `use`, and a file's own declaration of the
+// same name shadows it. Everything here is written in the language any project uses to wrap its own C++ types
+// (4.10.1); kif never reads reloco's headers. `#[cxx_name("..")]` gives the C++ spelling when it differs from the
+// kif name, `#[header("..")]` the header the generated code includes (the developer still provides the include
+// path). The scalar types (`bool`, `char`, `i8`..`u64`, `usize`, `isize`, `void`) are built into the compiler.
+//
+// Tiers follow reloco's container contract: plain = checked (panics), `try_` = fallible (`result<..>`),
+// `#[unsafe]` = needs an `unsafe` block.
+
+// ---------------------------------------------------------------- errors and results
+
+#[cxx_name("reloco::error"), header("reloco/error.hpp"), copy, send, sync]
+extern "C++" type error;
+
+#[cxx_name("reloco::expected"), header("reloco/expected.hpp")]
+extern "C++" type expected<T, E = error>;
+
+// `?`, `ok(..)` and `err(..)` work on the type marked `lang(result)`.
+#[lang(result)]
+type result<T> = expected<T, error>;
+
+// `#[zeroable]` (4.17): an all-zero byte pattern is a valid value, so the type can be a `#[tls]`/`#[per_cpu]` cell. Verified
+// against reloco: `optional` (zero is empty), `duration`/`instant` (zero is the epoch), `fixed_int`, `fixed_point`,
+// `wrapping`, `saturating`, `checked_value` (zero, not moved from) and `call_location_ref` (zero is `none()`). Not zeroable:
+// `error` (no enumerator 0), `non_zero`, `allocator_ref`, and every owning container or pointer (hold those in a `slot`).
+#[zeroable]
+#[cxx_name("reloco::optional"), header("reloco/optional.hpp"), lang(optional), send(T), sync(T)]
+extern "C++" type optional<T>;
+
+extern "C++" impl<T> optional<T> {
+    #[when(true, some)] fn has_value(&self) -> bool;
+    #[checked, unchecked_form(unsafe_value, some)] fn value(&self) -> &T;   // panics when empty
+    #[unsafe] fn unsafe_value(&self) -> &T;
+    fn try_value(&self) -> result<&T>;
+    fn value_or(&self, fallback: T) -> T;
+    fn reset(&mut self) -> ();
+}
+
+// ---------------------------------------------------------------- allocation
+
+#[cxx_name("reloco::allocator_ref"), header("reloco/allocator.hpp"), copy]
+extern "C++" type allocator_ref;               // allocators are persistent: the context outlives every user, so it is `'static`
+
+#[cxx_name("reloco::default_allocator"), header("reloco/default_allocator.hpp")]
+extern "C++" fn default_allocator() -> allocator_ref;
+
+// ---------------------------------------------------------------- owning and shared pointers
+
+// Thread safety is opt in: a type with no `send`/`sync` is neither (so `rc`, `c_ptr`, `allocator_ref` stay single-thread).
+// `send(T)` means "send when T is send" (likewise `sync(T)`); bare `send` is unconditional.
+//
+// `ptr<T>`: unique ownership. `try_allocate(alloc, ctor_args..)` forwards the arguments to T's construction protocol
+// (4.7); the checker validates them against T's `try_construct`/`try_create`, not against this declaration.
+#[cxx_name("reloco::unique_ptr"), header("reloco/unique_ptr.hpp"), send(T), sync(T)]
+extern "C++" type ptr<T>;
+
+extern "C++" impl<T> ptr<T> {
+    #[allocates] #[forward_args] fn try_allocate(alloc: allocator_ref, ...) -> result<Self>;
+    #[allocates] #[forward_args] fn try_create(...) -> result<Self>;
+    #[lang(deref), unchecked_form(unsafe_get, non_null)] fn deref(&self) -> &T;   // `*p`, `p.field`; checked: panics when null
+    #[lang(deref), preserves] fn deref_mut(&mut self) -> &mut T;
+    #[unsafe] fn unsafe_get(&self) -> &T;
+    #[when(false, non_null)] fn is_null(&self) -> bool;
+    fn reset(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+// `arc<T>`: shared ownership with an atomic count (a real `arc` needs T both send and sync; the checker applies that). `weak<T>` observes it.
+#[cxx_name("reloco::shared_ptr"), header("reloco/shared_ptr.hpp"), send(T), sync(T)]
+extern "C++" type arc<T>;
+
+#[cxx_name("reloco::weak_ptr"), header("reloco/shared_ptr.hpp"), send(T), sync(T)]
+extern "C++" type weak<T>;
+
+extern "C++" impl<T> arc<T> {
+    #[allocates] #[forward_args] fn try_allocate(alloc: allocator_ref, ...) -> result<Self>;
+    #[lang(deref)] fn deref(&self) -> &T;
+    fn try_get(&self) -> result<&T>;
+    fn use_count(&self) -> usize;
+    fn try_clone(&self) -> result<Self>;                                // shares: bumps the count
+    fn reset(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+extern "C++" impl<T> weak<T> {
+    fn lock(&self) -> result<arc<T>>;                                   // fails when the object is gone
+    fn use_count(&self) -> usize;
+    fn try_clone(&self) -> result<Self>;
+    fn reset(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+// `rc<T>`: shared ownership with a non-atomic count (single thread only). `weak_rc<T>` observes it.
+#[cxx_name("reloco::rc"), header("reloco/rc.hpp")]
+extern "C++" type rc<T>;
+
+#[cxx_name("reloco::weak_rc"), header("reloco/rc.hpp")]
+extern "C++" type weak_rc<T>;
+
+extern "C++" impl<T> rc<T> {
+    #[allocates] #[forward_args] fn try_allocate(alloc: allocator_ref, ...) -> result<Self>;
+    #[lang(deref)] fn deref(&self) -> &T;
+    fn try_get(&self) -> result<&T>;
+    fn use_count(&self) -> usize;
+    fn try_clone(&self) -> result<Self>;
+    fn reset(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+extern "C++" impl<T> weak_rc<T> {
+    fn lock(&self) -> result<rc<T>>;
+    fn use_count(&self) -> usize;
+    fn try_clone(&self) -> result<Self>;
+    fn reset(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+// Raw pointers: unsafe, for FFI only (4.6). They are language types (`c_ptr<T>` is `T *`, `c_cptr<T>` is
+// `const T *`); they are declared here so that they have a generic arity like every other prelude type.
+#[lang(c_ptr), copy]
+extern "C++" type c_ptr<T>;
+
+#[lang(c_cptr), copy]
+extern "C++" type c_cptr<T>;
+
+// ---------------------------------------------------------------- strings
+
+// `str` owns heap text, `str_view` borrows it (4.14). `cstr` is a static-lifetime `const char *`.
+#[cxx_name("reloco::string"), header("reloco/string.hpp"), lang(str), send, sync]
+extern "C++" type str;
+
+// Type-erased, non-owning callable (a context + function pointer pair). It borrows what it was made from, so it carries a
+// lifetime like `str_view`. Only a `fn` item, an `extern` function or a method of a borrowed value converts to it: kif has
+// no capturing closures (a non-capturing lambda is a `fn`). `F` is a `fn(..) -> ..` type; `&mut` captured state is not allowed (the call takes `&self`).
+#[cxx_name("reloco::function_ref"), header("reloco/function_ref.hpp"), copy]
+extern "C++" type fn_ref<'a, F>;
+
+extern "C++" impl<'a, F> fn_ref<'a, F> {
+    fn from_fn(f: F) -> fn_ref<'static, F>;                             // a plain function has no state to borrow
+    fn from_ref<T>(obj: &'a T, f: fn(&T) -> ()) -> Self;                // bind a method-like function to a borrowed value
+}
+
+#[cxx_name("reloco::string_view"), header("reloco/string_view.hpp"), lang(str_view), copy, send, sync]
+extern "C++" type str_view<'a>;
+
+#[lang(cstr), copy, send, sync]
+extern "C++" type cstr;
+
+extern "C++" impl str {
+    #[allocates] fn try_create(text: str_view) -> result<Self>;
+    #[allocates] fn try_allocate(alloc: allocator_ref, text: str_view) -> result<Self>;
+    #[allocates] fn try_clone(&self) -> result<Self>;
+    #[len_of] fn len(&self) -> usize;
+    #[when(false, non_empty)] fn is_empty(&self) -> bool;
+    fn capacity(&self) -> usize;
+    fn view(&self) -> str_view;                                         // borrows `self`
+    #[allocates, preserves] fn try_reserve(&mut self, n: usize) -> result<()>;
+    fn try_assign(&mut self, text: str_view) -> result<()>;
+    #[allocates, preserves] fn try_append(&mut self, text: str_view) -> result<()>;
+    #[allocates, preserves] fn try_push(&mut self, c: char) -> result<()>;
+    fn try_pop(&mut self) -> result<()>;
+    #[allocates, preserves] fn try_insert(&mut self, at: usize, text: str_view) -> result<()>;
+    fn try_erase(&mut self, at: usize, count: usize) -> result<()>;
+    fn clear(&mut self) -> ();
+    fn starts_with(&self, text: str_view) -> bool;
+    fn contains(&self, text: str_view) -> bool;
+    fn drop(&mut self);
+}
+
+extern "C++" impl<'a> str_view<'a> {
+    #[len_of] fn len(&self) -> usize;
+    #[when(false, non_empty)] fn is_empty(&self) -> bool;
+    fn starts_with(&self, text: str_view) -> bool;
+    fn ends_with(&self, text: str_view) -> bool;
+    fn contains(&self, text: str_view) -> bool;
+}
+
+// ---------------------------------------------------------------- thread-local and per-CPU cells (4.17)
+
+// `slot<T>` holds a complex object in a `#[tls]` or `#[per_cpu]` static. It is only valid there (KIFP187); the access
+// methods (`try_with`, `with_ready`, `with`, `with_mut`) are built in to the checker and are not declared here. The C++
+// class is reloco's `tls_slot<T>` for TLS and `per_cpu_slot<T>` for per-CPU cells.
+#[cxx_name("reloco::tls_slot"), header("reloco/tls_slot.hpp"), lang(slot)]
+extern "C++" type slot<T>;
+
+// ---------------------------------------------------------------- containers
+
+#[cxx_name("reloco::vector"), header("reloco/vector.hpp"), send(T), sync(T)]
+extern "C++" type vector<T>;
+
+extern "C++" impl<T> vector<T> {
+    #[allocates] fn try_create(capacity: usize) -> result<Self>;
+    #[allocates] fn try_allocate(alloc: allocator_ref, capacity: usize) -> result<Self>;
+    #[allocates] fn try_clone(&self) -> result<Self>;                                // needs `T: cloneable` (checked at use)
+    #[len_of] fn len(&self) -> usize;
+    #[when(false, non_empty)] fn is_empty(&self) -> bool;
+    fn capacity(&self) -> usize;
+    #[lang(index), unchecked_form(unsafe_at, lt_len(i))] fn index(&self, i: usize) -> &T;   // `v[i]`: checked, panics out of range
+    #[lang(index), preserves] fn index_mut(&mut self, i: usize) -> &mut T;
+    fn try_at(&self, i: usize) -> result<&T>;
+    #[unsafe] fn unsafe_at(&self, i: usize) -> &T;
+    #[allocates, preserves] fn try_push(&mut self, value: T) -> result<()>;
+    fn try_pop(&mut self) -> result<()>;
+    #[allocates, preserves] fn try_reserve(&mut self, n: usize) -> result<()>;
+    #[allocates] fn try_resize(&mut self, n: usize) -> result<()>;
+    #[allocates, preserves] fn try_insert_at(&mut self, i: usize, value: T) -> result<()>;
+    fn try_erase_at(&mut self, i: usize) -> result<()>;
+    fn clear(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+// Borrowing prelude types carry a lifetime so results are tied to what they borrow: `str_view<'a>`, `sink<'a>` and
+// `c_string_span_sink<'a>`. Users write `str_view`/`sink` and the lifetime is elided as for `&T` (4.2), so
+// `fn view(&self) -> str_view` borrows `self` and `fn pick(a: str_view, b: str_view) -> str_view` is KIFP162.
+// (`allocator_ref` is persistent, so like `cstr` it is `'static` and never takes part in elision.) Owning containers need none; their `&T` results already borrow `&self`.
+
+// There is no `span` type here: a borrowed contiguous run is the built-in slice `&[T]` / `&mut [T]`, lowered to
+// `reloco::span<const T>` / `reloco::span<T>` (and to `{ptr, len}` in C). Arrays, `vector<T>`, `str` and `str_view` borrow as
+// slices (`as_slice()`, or `v[a..b]`), `[char; N]`, `vector<char>` and `&[char]` also as `str_view`.
+
+// ---------------------------------------------------------------- maps, sets, queues
+
+// None of these has `operator[]` (it would insert silently): lookups are `try_at`/`try_find`, insertion is `try_insert`.
+// Keys need `ord` for the sorted containers and `hash` (which implies `eq`) for the hashed ones; the comparison, hash and
+// equality functors are reloco's defaults (`std::less`, `std::hash`, `std::equal_to`). Results that borrow
+// (`&V`, `&K`) are tied to `&self`. `try_clone` needs the keys and values to be `cloneable` (checked at the use).
+//
+// flat_map / flat_set: a sorted vector; cheap iteration and lookup, O(n) insertion. flat_hash_map / flat_hash_set: open
+// addressing, unordered. tree_map / tree_set: node based and sorted (stable references, O(log n) everything).
+// The `#[lang(entry)]` family mirrors Rust's `entry` API: `try_entry_or_insert(key, default)` returns the value slot.
+
+#[cxx_name("reloco::flat_map"), header("reloco/flat_map.hpp"), send(K, V), sync(K, V)]
+extern "C++" type flat_map<K: ord, V>;
+
+extern "C++" impl<K: ord, V> flat_map<K, V> {
+    #[allocates] fn try_create(capacity: usize) -> result<Self>;
+    #[allocates] fn try_allocate(alloc: allocator_ref, capacity: usize) -> result<Self>;
+    #[allocates] fn try_clone(&self) -> result<Self>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+    fn capacity(&self) -> usize;
+    fn contains(&self, key: &K) -> bool;
+    fn try_at(&self, key: &K) -> result<&V>;
+    fn try_at_mut(&mut self, key: &K) -> result<&mut V>;
+    #[allocates] fn try_insert(&mut self, key: K, value: V) -> result<&mut V>;
+    fn try_remove(&mut self, key: &K) -> result<()>;
+    #[allocates] fn try_entry_or_insert(&mut self, key: K, default: V) -> result<&mut V>;
+    #[allocates] fn try_reserve(&mut self, n: usize) -> result<()>;
+    fn clear(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+#[cxx_name("reloco::flat_set"), header("reloco/flat_set.hpp"), send(T), sync(T)]
+extern "C++" type flat_set<T: ord>;
+
+extern "C++" impl<T: ord> flat_set<T> {
+    #[allocates] fn try_create(capacity: usize) -> result<Self>;
+    #[allocates] fn try_allocate(alloc: allocator_ref, capacity: usize) -> result<Self>;
+    #[allocates] fn try_clone(&self) -> result<Self>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+    fn contains(&self, key: &T) -> bool;
+    fn try_find(&self, key: &T) -> result<&T>;
+    #[allocates] fn try_insert(&mut self, value: T) -> result<()>;
+    fn try_remove(&mut self, key: &T) -> result<()>;
+    #[allocates] fn try_reserve(&mut self, n: usize) -> result<()>;
+    fn clear(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+#[cxx_name("reloco::flat_hash_map"), header("reloco/flat_hash_map.hpp"), send(K, V), sync(K, V)]
+extern "C++" type flat_hash_map<K: hash, V>;
+
+extern "C++" impl<K: hash, V> flat_hash_map<K, V> {
+    #[allocates] fn try_create() -> result<Self>;
+    #[allocates] fn try_allocate(alloc: allocator_ref) -> result<Self>;
+    #[allocates] fn try_clone(&self) -> result<Self>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+    fn capacity(&self) -> usize;
+    fn contains(&self, key: &K) -> bool;
+    fn try_at(&self, key: &K) -> result<&V>;
+    fn try_at_mut(&mut self, key: &K) -> result<&mut V>;
+    #[allocates] fn try_insert(&mut self, key: K, value: V) -> result<&mut V>;
+    fn try_remove(&mut self, key: &K) -> result<()>;
+    #[allocates] fn try_entry_or_insert(&mut self, key: K, default: V) -> result<&mut V>;
+    #[allocates] fn try_reserve(&mut self, n: usize) -> result<()>;
+    fn clear(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+#[cxx_name("reloco::flat_hash_set"), header("reloco/flat_hash_set.hpp"), send(T), sync(T)]
+extern "C++" type flat_hash_set<T: hash>;
+
+extern "C++" impl<T: hash> flat_hash_set<T> {
+    #[allocates] fn try_create() -> result<Self>;
+    #[allocates] fn try_allocate(alloc: allocator_ref) -> result<Self>;
+    #[allocates] fn try_clone(&self) -> result<Self>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+    fn contains(&self, key: &T) -> bool;
+    fn try_find(&self, key: &T) -> result<&T>;
+    #[allocates] fn try_insert(&mut self, value: T) -> result<()>;
+    fn try_remove(&mut self, key: &T) -> result<()>;
+    #[allocates] fn try_reserve(&mut self, n: usize) -> result<()>;
+    fn clear(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+#[cxx_name("reloco::tree_map"), header("reloco/tree_map.hpp"), send(K, V), sync(K, V)]
+extern "C++" type tree_map<K: ord, V>;
+
+extern "C++" impl<K: ord, V> tree_map<K, V> {
+    #[allocates] fn try_create() -> result<Self>;
+    #[allocates] fn try_allocate(alloc: allocator_ref) -> result<Self>;
+    #[allocates] fn try_clone(&self) -> result<Self>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+    fn contains(&self, key: &K) -> bool;
+    fn try_at(&self, key: &K) -> result<&V>;
+    fn try_at_mut(&mut self, key: &K) -> result<&mut V>;
+    #[allocates] fn try_insert(&mut self, key: K, value: V) -> result<&mut V>;
+    fn try_remove(&mut self, key: &K) -> result<()>;
+    #[allocates] fn try_entry_or_insert(&mut self, key: K, default: V) -> result<&mut V>;
+    fn try_first_key(&self) -> result<&K>;                              // smallest / greatest key (no tuples in kif)
+    fn try_last_key(&self) -> result<&K>;
+    fn clear(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+#[cxx_name("reloco::tree_set"), header("reloco/tree_set.hpp"), send(T), sync(T)]
+extern "C++" type tree_set<T: ord>;
+
+extern "C++" impl<T: ord> tree_set<T> {
+    #[allocates] fn try_create() -> result<Self>;
+    #[allocates] fn try_allocate(alloc: allocator_ref) -> result<Self>;
+    #[allocates] fn try_clone(&self) -> result<Self>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+    fn contains(&self, key: &T) -> bool;
+    fn try_find(&self, key: &T) -> result<&T>;
+    #[allocates] fn try_insert(&mut self, value: T) -> result<()>;
+    fn try_remove(&mut self, key: &T) -> result<()>;
+    fn try_first(&self) -> result<&T>;
+    fn try_last(&self) -> result<&T>;
+    fn try_pop_first(&mut self) -> result<T>;
+    fn try_pop_last(&mut self) -> result<T>;
+    fn clear(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+#[cxx_name("reloco::vec_deque"), header("reloco/vec_deque.hpp"), send(T), sync(T)]
+extern "C++" type vec_deque<T>;
+
+extern "C++" impl<T> vec_deque<T> {
+    #[allocates] fn try_create() -> result<Self>;
+    #[allocates] fn try_allocate(alloc: allocator_ref) -> result<Self>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+    #[allocates] fn try_push_back(&mut self, value: T) -> result<()>;
+    #[allocates] fn try_push_front(&mut self, value: T) -> result<()>;
+    fn try_pop_back(&mut self) -> result<T>;
+    fn try_pop_front(&mut self) -> result<T>;
+    fn try_front(&self) -> result<&T>;
+    fn try_back(&self) -> result<&T>;
+    fn try_at(&self, i: usize) -> result<&T>;
+    fn clear(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+#[cxx_name("reloco::binary_heap"), header("reloco/binary_heap.hpp"), send(T), sync(T)]
+extern "C++" type binary_heap<T: ord>;
+
+extern "C++" impl<T: ord> binary_heap<T> {
+    #[allocates] fn try_create() -> result<Self>;
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool;
+    #[allocates] fn try_push(&mut self, value: T) -> result<()>;
+    fn try_pop(&mut self) -> result<T>;                                 // the greatest element
+    fn try_peek(&self) -> result<&T>;
+    fn into_sorted_vec(self) -> vector<T>;
+    fn clear(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+// ---------------------------------------------------------------- values: ordering, time, fixed width numbers
+
+// `ordering` is reloco's three-way result. It is a plain enum (so `match` is exhaustive over it) whose enumerators keep
+// reloco's values; `compare` works for any `ord` type.
+#[cxx_name("reloco::ordering"), header("reloco/ordering.hpp")]
+enum ordering : i8 {
+    less = -1,
+    equal = 0,
+    greater = 1,
+}
+
+#[cxx_name("reloco::compare"), header("reloco/ordering.hpp")]
+extern "C++" fn compare<T: ord>(a: &T, b: &T) -> ordering;
+#[cxx_name("reloco::is_lt")] extern "C++" fn is_lt(o: ordering) -> bool;
+#[cxx_name("reloco::is_eq")] extern "C++" fn is_eq(o: ordering) -> bool;
+#[cxx_name("reloco::is_gt")] extern "C++" fn is_gt(o: ordering) -> bool;
+#[cxx_name("reloco::is_le")] extern "C++" fn is_le(o: ordering) -> bool;
+#[cxx_name("reloco::is_ge")] extern "C++" fn is_ge(o: ordering) -> bool;
+#[cxx_name("reloco::reverse")] extern "C++" fn reverse(o: ordering) -> ordering;
+#[cxx_name("reloco::then")] extern "C++" fn then(first: ordering, second: ordering) -> ordering;
+
+// `duration` is seconds plus nanoseconds (like Rust's `Duration`). `+` and comparisons are operators; subtraction and
+// division can fail, so they are `checked_*`.
+#[zeroable]
+#[cxx_name("reloco::duration"), header("reloco/duration.hpp"), copy, send, sync]
+extern "C++" type duration;
+
+extern "C++" impl duration {
+    fn from_secs(secs: u64) -> Self;
+    fn from_millis(millis: u64) -> Self;
+    fn from_micros(micros: u64) -> Self;
+    fn from_nanos(nanos: u64) -> Self;
+    fn as_secs(&self) -> u64;
+    fn as_millis(&self) -> u64;
+    fn as_micros(&self) -> u64;
+    fn as_nanos(&self) -> u64;
+    fn subsec_millis(&self) -> u32;
+    fn subsec_micros(&self) -> u32;
+    fn subsec_nanos(&self) -> u32;
+    fn is_zero(&self) -> bool;
+    fn checked_sub(&self, rhs: &duration) -> result<duration>;
+    fn checked_div(&self, rhs: u64) -> result<duration>;
+    #[operator("+")] fn add(self, rhs: duration) -> duration;
+    #[operator("==")] fn eq(&self, rhs: &duration) -> bool;
+    #[operator("<")] fn lt(&self, rhs: &duration) -> bool;
+}
+
+// `instant` is a point on the monotonic clock; only differences between instants mean anything.
+#[zeroable]
+#[cxx_name("reloco::instant"), header("reloco/instant.hpp"), copy, send, sync]
+extern "C++" type instant;
+
+extern "C++" impl instant {
+    fn now() -> Self;
+    fn elapsed(&self) -> duration;
+    fn duration_since(&self, earlier: &instant) -> duration;           // `earlier` must not be later (traps otherwise)
+    fn saturating_duration_since(&self, earlier: &instant) -> duration;
+    fn checked_duration_since(&self, earlier: &instant) -> result<duration>;
+    fn checked_add(&self, rhs: duration) -> result<instant>;
+    fn checked_sub(&self, rhs: duration) -> result<instant>;
+    #[operator("==")] fn eq(&self, rhs: &instant) -> bool;
+    #[operator("<")] fn lt(&self, rhs: &instant) -> bool;
+}
+
+// `fixed_int<N>` is an N-bit (N a power of two, at least 8) signed integer, `fixed_int<N, false>` an unsigned one. reloco picks
+// the native type where there is one, else a limb array; kif sees one type either way. Arithmetic wraps like every kif
+// integer; use `wrapping`/`saturating`/`checked_*` wrappers for the other behaviours.
+#[zeroable]
+#[cxx_name("reloco::fixed_int"), header("reloco/fixed_int.hpp"), copy, send, sync]
+extern "C++" type fixed_int<const N: usize, const Signed: bool = true>;
+
+extern "C++" impl<N, Signed> fixed_int<N, Signed> {
+    fn is_negative(&self) -> bool;
+    #[operator("+")] fn add(self, rhs: Self) -> Self;
+    #[operator("-")] fn sub(self, rhs: Self) -> Self;
+    #[operator("*")] fn mul(self, rhs: Self) -> Self;
+    #[operator("==")] fn eq(&self, rhs: &Self) -> bool;
+    #[operator("<")] fn lt(&self, rhs: &Self) -> bool;
+}
+
+// `fixed_point<Rep, FracBits>`: a binary fixed-point number stored in the integer `Rep` with `FracBits` fractional bits.
+#[zeroable]
+#[cxx_name("reloco::fixed_point"), header("reloco/fixed_point.hpp"), copy, send, sync]
+extern "C++" type fixed_point<Rep: integer, const FracBits: u32>;
+
+extern "C++" impl<Rep, FracBits> fixed_point<Rep, FracBits> {
+    fn from_raw(raw: Rep) -> Self;                                      // the stored bits, not a value
+    fn from_int(value: Rep) -> Self;
+    fn raw(&self) -> Rep;
+    fn to_int(&self) -> Rep;                                            // truncates towards zero
+    fn fractional_percent(&self) -> u32;
+    fn pow(base: Self, exponent: u64) -> Self;
+    fn sqrt(&self) -> Self;
+    fn exp(&self) -> Self;
+    #[operator("+")] fn add(self, rhs: Self) -> Self;
+    #[operator("-")] fn sub(self, rhs: Self) -> Self;
+    #[operator("*")] fn mul(self, rhs: Self) -> Self;
+    #[operator("/")] fn div(self, rhs: Self) -> Self;
+    #[operator("==")] fn eq(&self, rhs: &Self) -> bool;
+    #[operator("<")] fn lt(&self, rhs: &Self) -> bool;
+}
+
+// `non_zero<T>`: an integer that is known not to be 0 (so `optional<non_zero<T>>` can use 0 as its empty state).
+#[cxx_name("reloco::non_zero"), header("reloco/non_zero.hpp"), copy, send, sync]
+extern "C++" type non_zero<T: integer>;
+
+extern "C++" impl<T> non_zero<T> {
+    #[allocates] fn try_create(value: T) -> result<Self>;                            // fails for 0
+    #[unsafe] fn unsafe_create(value: T) -> Self;                       // the caller guarantees `value != 0`
+    fn get(&self) -> T;
+}
+
+// ---------------------------------------------------------------- alternative arithmetic (4.3)
+
+// Plain arithmetic always wraps; these opt in to other behaviour. `T` is any integer type.
+#[zeroable]
+#[cxx_name("reloco::wrapping"), header("reloco/wrapping.hpp"), copy, send, sync]
+extern "C++" type wrapping<T: integer>;
+
+#[zeroable]
+#[cxx_name("reloco::saturating"), header("reloco/saturating.hpp"), copy, send, sync]
+extern "C++" type saturating<T: integer>;
+
+#[zeroable]
+#[cxx_name("reloco::checked_value"), header("reloco/checked_value.hpp"), send, sync]
+extern "C++" type checked_value<T: integer>;
+
+extern "C++" impl<T> wrapping<T> {
+    fn new(value: T) -> Self;
+    fn get(&self) -> T;
+}
+
+extern "C++" impl<T> saturating<T> {
+    fn new(value: T) -> Self;
+    fn get(&self) -> T;
+}
+
+extern "C++" impl<T> checked_value<T> {
+    fn new(value: T) -> Self;
+    #[checked] fn get(&self) -> T;                                      // panics when an operation overflowed
+}
+
+// ---------------------------------------------------------------- source locations (4.16)
+
+#[zeroable]
+#[cxx_name("reloco::call_location_ref"), header("reloco/call_location.hpp"), copy, lang(call_location), send, sync]
+extern "C++" type call_location_ref;
+
+extern "C++" impl call_location_ref {
+    fn file(&self) -> cstr;
+    fn line(&self) -> u32;
+}

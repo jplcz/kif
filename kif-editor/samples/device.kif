@@ -1,0 +1,7 @@
+// Stub imported by example.kif so the sample checks clean.
+namespace device;
+
+#[kobj, version(1)]
+interface device {
+    method probe() -> i32;
+}

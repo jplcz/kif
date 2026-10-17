@@ -1,0 +1,62 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "kif: install editor support into VS Code",
+      "type": "shell",
+      "command": "scripts/install-vscode.sh ${input:kifProfileArg}",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "kif: test (front end + LSP)",
+      "type": "shell",
+      "command": "python3 -m unittest discover -s tests",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "kif: check current file",
+      "type": "shell",
+      "command": "python3 -m kiflang ${file}",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": {
+        "owner": "kif",
+        "fileLocation": "absolute",
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+): (error|warning) (KIFW?\\d+): (.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
+      }
+    },
+    {
+      "label": "kif: npm install (extension client)",
+      "type": "shell",
+      "command": "npm install --omit=dev --no-audit --no-fund",
+      "options": {
+        "cwd": "${workspaceFolder}/kif-editor/vscode"
+      },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "kifProfileArg",
+      "type": "promptString",
+      "description": "VS Code profile to install into, as '--profile <name>' (leave empty for the default profile)",
+      "default": ""
+    }
+  ]
+}

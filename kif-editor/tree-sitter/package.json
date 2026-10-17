@@ -1,0 +1,21 @@
+{
+  "name": "tree-sitter-kif",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for the kif (procedural kobj interface) language",
+  "license": "BSD-2-Clause",
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "test": "tree-sitter parse ../samples/example.kif"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.kif",
+      "file-types": ["kif"],
+      "highlights": "queries/highlights.scm",
+      "injections": "queries/injections.scm"
+    }
+  ],
+  "devDependencies": {
+    "tree-sitter-cli": "^0.22.0"
+  }
+}

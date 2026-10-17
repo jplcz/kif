@@ -1,0 +1,7 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Jarosław Pelczar <jarek@jpelczar.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later WITH LicenseRef-Kif-Output-Exception
+# @KIF_TOOL_NAME@: launcher installed by the kif package (generated from cmake/kif-tool.sh.in).
+here=$(cd "$(dirname "$0")" && pwd -P)
+PYTHONPATH="$here/@KIF_PY_RELDIR@${PYTHONPATH:+:$PYTHONPATH}" exec "${PYTHON:-python3}" -m @KIF_TOOL_MODULE@ "$@"

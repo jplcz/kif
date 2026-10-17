@@ -1,0 +1,30 @@
+// Stage 2b: a struct that owns vectors: S_drop runs the user's drop body, then frees the vector fields in reverse order (C++ order).
+struct log { private n: u32 = 0, a: vector<u8>, b: vector<u32> }
+impl log {
+    fn try_construct_at(mem: c_ptr<Self>, cap: usize) -> result<()> {
+        unsafe { (*mem).a = vector::try_create(cap)?; (*mem).b = vector::try_create(cap)?; }
+        ok(())
+    }
+    fn add(&mut self, x: u32) -> result<()> {
+        self.a.try_push(x as u8)?;
+        self.b.try_push(x * 2)?;
+        self.n += 1;
+        ok(())
+    }
+    fn total(&self) -> u32 { let mut t: u32 = 0; for i in 0..self.b.len() { t += self.b[i]; } t + self.n }
+    fn drop(&mut self) { self.n = 0; }
+}
+struct plain { v: vector<u32> }
+impl plain {
+    fn count(&self) -> usize { self.v.len() }
+}
+
+// A str field is released by named_drop too.
+struct named { id: u32, label: str }
+impl named {
+    fn try_construct_at(mem: c_ptr<Self>, text: str_view) -> result<()> {
+        unsafe { (*mem).id = 7; (*mem).label = str::try_create(text)?; }
+        ok(())
+    }
+    fn size(&self) -> usize { self.label.len() }
+}

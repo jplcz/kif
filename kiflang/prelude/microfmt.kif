@@ -1,0 +1,202 @@
+// SPDX-FileCopyrightText: 2026 Jarosław Pelczar <jarek@jpelczar.com>
+//
+// SPDX-License-Identifier: BSD-2-Clause
+
+// microfmt types for kif (docs/kif-proc-language.md 4.16). This is an ordinary module, not part of the global prelude:
+//
+//     import "microfmt.kif";
+//     use microfmt::{sink, memory_buffer};      // or write `microfmt::sink` in full
+//
+// `write!`, `try_write!`, `writeln!` and the logging macros are language built-ins that lower to microfmt; this file
+// only declares the destination types they write to. Without `#[cxx_name]` the C++ spelling of an item is
+// `<namespace>::<name>`, so `sink` below is `microfmt::sink`. Sinks that do not allocate are not `#[might_sleep]`;
+// a sink that can block (a UART with flow control, a mutex-protected log) is declared by the project with
+// `#[might_sleep]` on its `write` entry so the atomic-context rules of 4.13 apply to `write!` into it.
+namespace microfmt;
+
+// ---------------------------------------------------------------- the sink value
+
+// `sink` is the parameter type of any function that formats text: a type-erased (context, callback) pair, cheap to copy
+// (copying a borrow), that says nothing about where text goes. A full bounded destination truncates; `write!` never fails.
+// A sink is never free-standing: it has no constructor and no `'static` form, and is only obtained from `as_sink()` on a
+// specific object, so its lifetime is that of the borrow of that object (it cannot outlive the buffer, ring or UART).
+// The objects below are C++ sinks; kif code defines its own by implementing `text_sink` (next section).
+#[header("microfmt/microfmt.hpp"), copy]
+extern "C++" type sink<'a>;
+
+// ---------------------------------------------------------------- sinks written in kif
+
+// A kif type becomes a sink by implementing this plain interface (4.15). `write` receives each piece of text and, like
+// every sink, must not fail: drop or truncate what does not fit. `as_sink` is provided for every implementer: it
+// builds the type-erased `sink` from `self`, so the result borrows the implementer (the same rule as the C++ sinks above).
+//
+//     struct uart { base: usize = 0 }
+//     impl text_sink for uart { fn write(&mut self, text: str_view) { ... } }
+//     fn greet(u: &mut uart) { write!(u.as_sink(), "hello {}", 42); }
+//
+// A sink that can block is marked `#[might_sleep]` on its `write`; the marker is checked where the sink is used.
+#[cxx_name("microfmt::text_sink"), header("microfmt/microfmt.hpp")]
+interface text_sink {
+    method write(&mut self, text: str_view) -> ();
+    #[provided] method as_sink(&mut self) -> sink;
+}
+
+// ---------------------------------------------------------------- bounded and growing buffers
+
+// Inline buffer of `N` bytes that grows on the heap when full: `try_write!(&mut buf, ..)` can fail with an
+// allocation error. `as_sink()` borrows it for `write!`, which then truncates instead of growing.
+#[header("microfmt/sinks/memory_buffer.hpp"), send]
+extern "C++" type memory_buffer<const N: usize = 512>;
+
+extern "C++" impl<N> memory_buffer<N> {
+    fn try_create() -> result<Self>;
+    fn as_sink(&mut self) -> sink;                                      // the sink borrows `self`
+    fn view(&self) -> str_view;                                         // the text written so far
+    fn len(&self) -> usize;
+    fn clear(&mut self) -> ();
+    fn drop(&mut self);
+}
+
+// Fixed caller-owned buffer, always NUL-terminated, truncates when full. The buffer must outlive the sink.
+#[header("microfmt/sinks/c_string_span_sink.hpp")]
+extern "C++" type c_string_span_sink<'a>;
+
+extern "C++" impl<'a> c_string_span_sink<'a> {
+    fn new(buffer: &'a mut [char]) -> Self;                             // the sink keeps a borrow of `buffer`
+    fn as_sink(&mut self) -> sink;
+    fn view(&self) -> str_view;
+    fn len(&self) -> usize;
+    fn max_len(&self) -> usize;
+    #[unsafe] fn c_str(&self) -> c_cptr<char>;                         // not `cstr` (static only): valid while the buffer lives
+}
+
+// Lock-free ring of `Capacity` bytes (single producer); old text is overwritten.
+#[header("microfmt/sinks/ring_buffer_sink.hpp"), send]
+extern "C++" type ring_buffer_sink<const Capacity: usize>;
+
+extern "C++" impl<Capacity> ring_buffer_sink<Capacity> {
+    fn new() -> Self;
+    fn as_sink(&mut self) -> sink;
+}
+
+// ---------------------------------------------------------------- format-spec enums
+
+// These are the values a format spec names (`{:align=center}`, `{:color=red}`); each keeps microfmt's enumerators and
+// underlying type. The `ansi` and `log` ones are renamed here because the module has one flat namespace.
+#[cxx_name("microfmt::text_case"), header("microfmt/formatters/styled.hpp")]
+enum text_case : u8 { none = 0, upper, lower, title }
+
+#[cxx_name("microfmt::text_align"), header("microfmt/formatters/styled.hpp")]
+enum text_align : u8 { left = 0, center, right }
+
+#[cxx_name("microfmt::quote_style"), header("microfmt/formatters/styled.hpp")]
+enum quote_style : u8 { none = 0, double_quotes, single_quotes, brackets, parens, angle_brackets }
+
+#[cxx_name("microfmt::ansi::color"), header("microfmt/formatters/ansi.hpp")]
+enum ansi_color : u8 {
+    none = 0,
+    black = 30, red = 31, green = 32, yellow = 33, blue = 34, magenta = 35, cyan = 36, white = 37,
+    bright_black = 90, bright_red = 91, bright_green = 92, bright_yellow = 93,
+    bright_blue = 94, bright_magenta = 95, bright_cyan = 96, bright_white = 97,
+}
+
+// Bit flags: values combine with `|` and are tested with `&`.
+#[cxx_name("microfmt::ansi::attribute"), header("microfmt/formatters/ansi.hpp"), flags]
+enum ansi_attribute : u8 { none = 0, bold = 1, dim = 2, italic = 4, underline = 8, blink = 16, reverse = 32 }
+
+#[cxx_name("microfmt::scale_base"), header("microfmt/formatters/units.hpp")]
+enum scale_base : u16 { decimal = 1000, binary = 1024 }                // SI (k, M, G) or IEC (KiB, MiB, GiB)
+
+#[cxx_name("microfmt::ptr_width_mode"), header("microfmt/formatters/pointer.hpp")]
+enum ptr_width_mode : u8 { native = 0, compat32, compat64 }          // hex digits of a printed pointer: 8/16, 8, 16
+
+#[cxx_name("microfmt::bit_type"), header("microfmt/formatters/bitfield.hpp")]
+enum bit_type : u8 { flag, value_hex, value_dec }
+
+// ---------------------------------------------------------------- pointer and memory views
+
+// Raw addresses are printed from integers, never from pointers: `raw_ptr(addr)` formats `addr` as a zero-padded hex
+// address (`0x0000...`, or `null` for 0), `raw_ptr32` always uses 8 digits (a 32-bit address space), `raw_ptr_mode`
+// picks the width. `raw_ptr_of` takes a C pointer and is unsafe only because it is a raw pointer in the first place.
+#[cxx_name("microfmt::raw_ptr_view"), header("microfmt/formatters/pointer.hpp"), copy, send, sync]
+extern "C++" type raw_ptr_view;
+
+#[cxx_name("microfmt::raw_ptr"), header("microfmt/formatters/pointer.hpp")]
+extern "C++" fn raw_ptr(addr: usize) -> raw_ptr_view;
+#[cxx_name("microfmt::raw_ptr")]
+extern "C++" fn raw_ptr_mode(addr: usize, mode: ptr_width_mode) -> raw_ptr_view;
+#[cxx_name("microfmt::raw_ptr32")]
+extern "C++" fn raw_ptr32(addr: usize) -> raw_ptr_view;
+#[cxx_name("microfmt::raw_ptr")]
+#[unsafe] extern "C++" fn raw_ptr_of<T>(p: c_cptr<T>) -> raw_ptr_view;
+
+// A hex dump of a byte slice: 16 bytes per line by default, an address column (starting at `base_addr`, which is only a
+// label) and an ASCII column. The view borrows the bytes.
+#[cxx_name("microfmt::hexdump_view"), header("microfmt/formatters/hexdump.hpp"), copy]
+extern "C++" type hexdump_view<'a>;
+
+#[cxx_name("microfmt::hexdump"), header("microfmt/formatters/hexdump.hpp")]
+extern "C++" fn hexdump<'a>(data: &'a [u8], base_addr: usize, bytes_per_line: u8, show_ascii: bool) -> hexdump_view<'a>;
+
+// Dump memory that cannot be read directly (device or other address space): `reader(addr, buf)` fills `buf` from
+// address `addr` and returns the byte count (0 = fault, which the dump prints as `??`). The reader is a borrowed,
+// type-erased callable, so the view cannot outlive it; C++ gets the (context, function) pair that microfmt expects.
+#[cxx_name("microfmt::hexdump_checked"), header("microfmt/formatters/hexdump.hpp")]
+extern "C++" fn hexdump_checked<'a>(base_addr: usize, total_len: usize, reader: fn_ref<'a, fn(usize, &mut [u8]) -> usize>,
+                                    bytes_per_line: u8, show_ascii: bool) -> hexdump_view<'a>;
+
+// Write the dump of `data` straight to `out`.
+#[cxx_name("microfmt::hexdump_to"), header("microfmt/formatters/hexdump.hpp")]
+extern "C++" fn hexdump_to(out: sink, data: &[u8], base_addr: usize);
+
+// ---------------------------------------------------------------- logging
+
+// The first argument of `info!`, `warn!`, `error!`, `debug!` and `trace!`: it fans a message out to its sinks.
+#[cxx_name("microfmt::log::logger"), header("microfmt/log/logger.hpp"), send, sync]
+extern "C++" type logger;
+
+extern "C++" impl logger {
+    fn new() -> Self;
+}
+
+// Severity, in ascending order; a logger drops everything below its own level and `off` drops everything.
+#[cxx_name("microfmt::log::level"), header("microfmt/log/log_msg.hpp")]
+enum log_level : u8 { trace = 0, debug, info, warn, err, critical, off }
+
+#[cxx_name("microfmt::log::to_string_view"), header("microfmt/log/log_msg.hpp")]
+extern "C++" fn log_level_name(level: log_level) -> str_view<'static>;     // "trace", "debug", ...
+
+// The extended logger also carries per-message metadata (process, thread, cpu and flags) to its sinks.
+#[cxx_name("microfmt::log::log_flag"), header("microfmt/log/extended_msg.hpp"), flags]
+enum log_flag : u32 { none = 0, can_wait = 1 }
+
+#[cxx_name("microfmt::log::log_meta"), header("microfmt/log/extended_msg.hpp"), copy, send, sync]
+extern "C++" type log_meta;
+
+extern "C++" impl log_meta {
+    fn new() -> Self;                                                   // pid, tid and flags 0; cpu is `no_cpu`
+    fn has(&self, flag: log_flag) -> bool;
+    fn can_wait(&self) -> bool;                                         // the sink may block for this message
+    fn user_flags(&self) -> u32;                                        // 16 bits reserved for the application
+    fn set(&mut self, flag: log_flag, on: bool) -> ();
+    fn set_user_flags(&mut self, user: u32) -> ();
+}
+
+// A formatted message and its metadata, as seen by a sink.
+#[cxx_name("microfmt::log::log_msg"), header("microfmt/log/log_msg.hpp")]
+extern "C++" type log_msg;
+
+#[cxx_name("microfmt::log::extended_log_msg"), header("microfmt/log/extended_msg.hpp")]
+extern "C++" type extended_log_msg;
+
+// `extended_logger<MaxSinks, MsgBufferCapacity>`: a `logger` whose messages get a `log_meta` from a callback. The
+// logging macros accept it wherever they accept a `logger`.
+#[cxx_name("microfmt::log::extended_logger"), header("microfmt/log/extended_logger.hpp"), send, sync]
+extern "C++" type extended_logger<const MaxSinks: usize = 4, const MsgBufferCapacity: usize = 256>;
+
+extern "C++" impl<MaxSinks, MsgBufferCapacity> extended_logger<MaxSinks, MsgBufferCapacity> {
+    fn new() -> Self;
+    // `callback` fills in the metadata for each message; `user` is handed back to it and must outlive the logger.
+    #[unsafe] fn set_meta_callback(&self, callback: fn(c_ptr<void>, &log_msg) -> log_meta, user: c_ptr<void>) -> ();
+    fn log(&self, msg: &extended_log_msg) -> ();
+}

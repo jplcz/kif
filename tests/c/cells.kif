@@ -1,0 +1,22 @@
+// #[tls] cells on the hosted provider: one thread-local block per module, accessed by scoped closures that are inlined.
+enum level: u8 { low, high }
+#[tls] static COUNT: u32 = 0;
+#[tls] static START: u32 = 10;
+#[tls] static MODE: level = level::low;
+#[tls] static HITS: [u8; 4] = [0; 4];
+#[tls] static FLAG: bool = true;
+
+fn bump() -> u32 {
+    COUNT.with_mut(|c| { *c = *c + 5; });
+    COUNT.with(|c| *c)
+}
+fn start() -> u32 { START.with(|s| *s) }
+fn flip() -> bool {
+    MODE.with_mut(|m| { *m = level::high; });
+    MODE.with(|m| *m == level::high)
+}
+fn hit() -> u8 {
+    HITS.with_mut(|h| { h[2] += 1; });
+    HITS.with(|h| h[2])
+}
+fn flag() -> bool { FLAG.with(|f| *f) }

@@ -1,0 +1,14 @@
+// Stage 2a: result<T> (int + out-parameter), `?`, ok/err, match on a result, local result, error compare.
+fn g(x: u32) -> result<u32> { if x > 3 { return err(error::busy); } ok(x) }
+fn f(x: u32) -> u32 {
+    match g(x) {
+        ok(v) => v,
+        err(e) => { if e == error::busy { 100 } else { 200 } }
+    }
+}
+fn h(x: u32) -> u32 { let r = g(x); let _ = g(x); match r { ok(v) => v + 10, err(_) => 0 } }
+fn chain(x: u32) -> result<u32> { let a = g(x)?; let b = g(a + 1)?; ok(a + b) }
+fn pass(x: u32) -> result<u32> { let r = g(x); r }
+fn which(x: u32) -> u32 {
+    match g(x) { ok(_) => 0, err(e) => match e { error::busy => 1, _ => 2 } }
+}

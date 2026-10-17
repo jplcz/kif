@@ -1,0 +1,36 @@
+// Slices: &[T] / &mut [T] are a pointer plus a length; arrays and vectors borrow into them, ranges are checked.
+struct pt { x: u32, y: u32 }
+
+fn sum(xs: &[u32]) -> u32 {
+    let mut t: u32 = 0;
+    for i in 0..xs.len() { t += xs[i]; }
+    t
+}
+fn zero_first(xs: &mut [u32]) { xs[0] = 0; }
+fn tail(xs: &[u32]) -> &[u32] { &xs[1..] }
+fn total_x(ps: &[pt]) -> u32 {
+    let mut t: u32 = 0;
+    for i in 0..ps.len() { t += ps[i].x; }
+    t
+}
+fn demo() -> u32 {
+    let mut a: [u32; 4] = [1, 2, 3, 4];
+    zero_first(&mut a);
+    let mid: &[u32] = &a[1..3];
+    sum(&a) * 100 + sum(mid) * 10 + sum(tail(&a[..])) + if sum(&a[4..]) == 0 { 1000 } else { 0 }
+}
+fn points() -> u32 {
+    let p: [pt; 2] = [pt { x: 5, y: 1 }, pt { x: 7, y: 2 }];
+    total_x(&p)
+}
+fn from_vec() -> result<u32> {
+    let mut v: vector<u32> = vector::try_create(4)?;
+    v.try_push(10)?;
+    v.try_push(20)?;
+    let n = sum(&v);
+    ok(n)
+}
+fn out_of_range(n: usize) -> u32 {
+    let a: [u32; 2] = [1, 2];
+    sum(&a[0..n])
+}

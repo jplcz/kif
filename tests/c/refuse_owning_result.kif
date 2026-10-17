@@ -1,0 +1,3 @@
+// refuse: a result local carrying an owning value could be left unchecked and never dropped.
+fn mk() -> result<vector<u8>> { let v: vector<u8> = vector::try_create(2)?; ok(v) }
+fn g() { let r = mk(); }

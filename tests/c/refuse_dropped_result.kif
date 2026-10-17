@@ -1,0 +1,3 @@
+// refuse: a result call whose error would be silently dropped.
+fn g() -> result<()> { ok(()) }
+fn k() { g(); }

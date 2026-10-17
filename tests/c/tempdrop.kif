@@ -1,0 +1,14 @@
+// Temporaries of `f()?`: a receiver, a discarded value, by-value arguments evaluated before a later failing `?`, a struct literal,
+// the right side of `&&` and a `while` condition. Each is dropped exactly once on success and on every failing `?` (ASan checks).
+fn mk(n: usize) -> result<vector<u8>> { if n > 9 { return err(error::busy); } let v: vector<u8> = vector::try_create(n)?; ok(v) }
+fn mks(n: usize) -> result<str> { if n > 9 { return err(error::busy); } let s: str = str::try_create("abc")?; ok(s) }
+struct pair { a: vector<u8>, b: str }
+fn lit(n: usize, m: usize) -> result<pair> { ok(pair { a: mk(n)?, b: mks(m)? }) }
+fn lit2(n: usize, m: usize) -> result<usize> { let p = pair { a: mk(n)?, b: mks(m)? }; ok(p.a.len() + p.b.len()) }
+fn user(n: usize, m: usize) -> result<usize> { let p = lit(n, m)?; ok(p.a.len()) }
+fn cond(n: usize, m: usize) -> result<usize> { if mk(n)?.len() > 1 && mks(m)?.len() > 1 { return ok(1); } ok(0) }
+fn wh(n: usize) -> result<usize> { let mut i: usize = 0; while mk(n)?.len() > i { i += 1; } ok(i) }
+fn take(v: vector<u8>) -> usize { v.len() }
+fn args(n: usize, m: usize) -> result<usize> { let k = take(mk(n)?) + take(mk(m)?); ok(k) }
+fn recv(n: usize, m: usize) -> result<usize> { let k = mk(n)?.len() + mks(m)?.len(); ok(k) }
+fn discard(n: usize) -> result<()> { mk(n)?; ok(()) }

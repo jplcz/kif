@@ -1,0 +1,13 @@
+{
+  "format": "kif-target",
+  "version": 1,
+  "name": "cxx-user",
+  "description": "Hosted C++ (user space) on the reloco runtime, no kobj emitter. The base for C++ targets; derive it with `extends`.",
+  "language": "cxx",
+  "standard": "c++20",
+  "hosted": true,
+  "includes": { "header": ["<cstdint>", "<cstddef>"] },
+  "annotations": {},
+  "features": { "int64_div": true, "floats": true, "line_directives": true },
+  "naming": { "prefix": "stem", "macro_case": "upper" }
+}

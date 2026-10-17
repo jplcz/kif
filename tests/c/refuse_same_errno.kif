@@ -1,0 +1,2 @@
+// refuse: the error names allocation_failed and in_place_growth_failed are both ENOMEM in C, so the second arm is unreachable.
+fn k(e: error) -> u32 { match e { error::allocation_failed => 1, error::in_place_growth_failed => 2, _ => 3 } }

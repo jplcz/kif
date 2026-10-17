@@ -1,0 +1,7 @@
+// Slices of `str`: a borrowed view of owned strings (iterate, index); the C caller supplies the array.
+fn total(a: &[str]) -> usize {
+    let mut t: usize = 0;
+    for s in a { t += s.len(); }
+    t
+}
+fn first(a: &[str]) -> usize { a[0].len() }

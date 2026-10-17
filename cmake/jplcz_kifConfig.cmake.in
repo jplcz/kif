@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 Jarosław Pelczar <jarek@jpelczar.com>
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later WITH LicenseRef-Kif-Output-Exception
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+if(NOT TARGET jplcz_reloco::reloco)
+    find_dependency(jplcz_reloco)
+endif()
+if(NOT TARGET jplcz_microfmt::microfmt)
+    find_dependency(jplcz_microfmt)
+endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/jplcz_kifTargets.cmake")
+
+# kif compiler: add_kif_library(), kif_target_sources(), kif_install_headers().
+include("${CMAKE_CURRENT_LIST_DIR}/Kif.cmake")

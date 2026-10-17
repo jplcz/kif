@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2026 Jarosław Pelczar <jarek@jpelczar.com>
+#
+# SPDX-License-Identifier: BSD-2-Clause
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.compiler }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build python3-pytest
+
+      # reloco is fetched from GitHub by CMake; its master is what kif builds against.
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+
+      - name: Build (runtime header checks, std-types gate)
+        run: cmake --build build
+
+      - name: Test (Python suite)
+        run: ctest --test-dir build --output-on-failure
+
+  # The pip/user-prefix installer, into a throwaway virtualenv.
+  pip-install:
+    name: pip install
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install into a virtualenv and run the tools
+        run: |
+          python3 -m venv "${{ runner.temp }}/venv"
+          "${{ runner.temp }}/venv/bin/pip" install .
+          "${{ runner.temp }}/venv/bin/kifc" --help > /dev/null
+          "${{ runner.temp }}/venv/bin/kif" --help > /dev/null

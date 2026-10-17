@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2026 Jarosław Pelczar <jarek@jpelczar.com>
+#
+# SPDX-License-Identifier: BSD-2-Clause
+
+name: Release
+
+# Manual-only: creating a GitHub release is always a deliberate action.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to release (e.g. v0.1.0); defaults to the current CMakeLists.txt version
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: resolve
+        run: |
+          tag="${{ inputs.tag }}"
+          if [ -z "$tag" ]; then
+            version=$(grep -oP 'project\([^)]*VERSION \K\d+\.\d+\.\d+' CMakeLists.txt)
+            tag="v${version}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure tag exists
+        run: |
+          if ! git rev-parse "${{ steps.resolve.outputs.tag }}" >/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "${{ steps.resolve.outputs.tag }}" -m "${{ steps.resolve.outputs.tag }}"
+            git push origin "${{ steps.resolve.outputs.tag }}"
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Package the kif VS Code extension
+        working-directory: kif-editor/vscode
+        run: |
+          npm ci --omit=dev --no-audit --no-fund
+          mkdir server
+          cp -r ../../kiflang server/
+          npx --yes @vscode/vsce package --out "${{ runner.temp }}/kif-language.vsix"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve.outputs.tag }}
+          generate_release_notes: true
+          files: ${{ runner.temp }}/kif-language.vsix

@@ -1,0 +1,56 @@
+// Drops are inserted by the compiler: a local is dropped at the end of its scope, on every early exit (`return`, `?`, `break`, `continue`),
+// and never after it was moved. Nothing here calls `drop`; the driver is built with ASan, so a missed or doubled drop fails the test.
+fn mk(n: usize) -> result<vector<u8>> { let v: vector<u8> = vector::try_create(n)?; ok(v) }
+
+// Early exits release what is already built.
+fn early(fail: bool) -> result<usize> {
+    let a: vector<u8> = vector::try_create(4)?;
+    let s: str = str::try_create("hi")?;
+    if fail { return err(error::busy); }
+    ok(a.len() + s.len())
+}
+
+// A by-value parameter is owned by the callee and dropped there; the caller's `v` is moved.
+fn take(v: vector<u8>) -> usize { v.len() }
+fn handoff() -> result<usize> {
+    let v = mk(3)?;
+    let n = take(v);
+    ok(n)
+}
+
+// Reassignment drops the old value only after the new one exists.
+fn reassign() -> result<usize> {
+    let mut s: str = str::try_create("a")?;
+    s = str::try_create("bcd")?;
+    ok(s.len())
+}
+
+// `continue` and `break` drop the loop body's locals.
+fn looped() -> result<usize> {
+    let mut t: usize = 0;
+    for i in 0..5 {
+        let v: vector<u8> = vector::try_create(2)?;
+        if i == 1 { continue; }
+        if i == 3 { break; }
+        t += v.len() + i as usize;
+    }
+    ok(t)
+}
+
+// A struct that owns a struct: outer_drop releases `tag`, then `inner` (which releases its own label), in reverse field order.
+struct node { v: u32, label: str }
+struct outer { inner: node, tag: str }
+impl outer {
+    fn fill(&mut self) -> result<()> {
+        self.tag = str::try_create("t")?;
+        self.inner.label = str::try_create("l")?;
+        self.tag = str::try_create("tt")?;
+        ok(())
+    }
+    fn size(&self) -> usize { self.tag.len() + self.inner.label.len() }
+}
+fn heap() -> result<usize> {
+    let mut o: ptr<outer> = ptr::try_allocate(default_allocator())?;
+    o.fill()?;
+    ok(o.size())
+}

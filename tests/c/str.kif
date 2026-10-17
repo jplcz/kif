@@ -1,0 +1,11 @@
+// Owned str and str_view: create, append, insert, erase, search.
+fn greet(name: str_view) -> result<usize> {
+    let mut t: str = str::try_create("hello ")?;
+    t.try_append(name)?;
+    t.try_insert(0, ">> ")?;
+    let ok1 = t.starts_with(">> he");
+    let ok2 = t.contains("lo wor");
+    t.try_erase(0, 3)?;
+    let n = t.view().len() + t.len();
+    if ok1 && ok2 { ok(n) } else { ok(0) }
+}

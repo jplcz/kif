@@ -1,0 +1,35 @@
+// Imports: qualified types, enums, functions and constants, `use` with an alias, and an owning struct from the library
+// that this file's code drops by itself (its S_drop comes from imp_lib_proc.h).
+import "./imp_lib.kif";
+use imp_lib::twice as dbl;
+fn area(p: imp_lib::point) -> i32 {
+    let c: imp_lib::color = imp_lib::color::green;
+    imp_lib::twice(p.sum()) + dbl(1) + imp_lib::pick(c) + imp_lib::LIMIT as i32
+}
+fn fill(n: u32) -> result<usize> {
+    let mut b: imp_lib::bag = imp_lib::make_bag(4)?;
+    b.add(n)?;
+    b.add(n + 1)?;
+    ok(b.count())
+}
+fn heap_sum(n: u32) -> result<usize> {
+    let mut p: ptr<imp_lib::bag> = ptr::try_allocate(default_allocator(), 4)?;
+    p.add(n)?;
+    ok(p.count())
+}
+struct twin { n: u32 }
+impl imp_lib::counter for twin {
+    fn get(&self) -> u32 { self.n }
+    fn add(&mut self, n: u32) -> u32 { self.n += n * 2; self.n }
+}
+fn dyn_total() -> u32 {
+    let mut a = imp_lib::simple { n: 1 };
+    let mut b = twin { n: 1 };
+    imp_lib::bump(&mut a);
+    imp_lib::bump(&mut b);
+    let c: &mut dyn imp_lib::counter = &mut b;
+    let x = c.add(1);
+    let y = a.get();
+    let z = imp_lib::bump(&mut a);
+    x + y + z
+}

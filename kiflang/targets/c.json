@@ -1,0 +1,18 @@
+{
+  "format": "kif-target",
+  "version": 1,
+  "name": "c",
+  "description": "Plain hosted C: libc, no kobj, no kernel services. The base of the other built-in targets.",
+  "language": "c",
+  "standard": "c11",
+  "hosted": true,
+  "includes": { "header": ["<stdint.h>", "<stdbool.h>", "<stddef.h>"] },
+  "panic": { "macro": "__builtin_trap()", "noreturn": true },
+  "assert": { "macro": "(({cond}) ? (void)0 : __builtin_trap())" },
+  "errno": { "style": "negative", "header": "<errno.h>" },
+  "alloc": { "malloc": "malloc({size})", "zalloc": "calloc(1, {size})", "realloc": "realloc({ptr}, {size})", "free": "free({ptr})", "aligned": "aligned_alloc({align}, {size})", "header": "<stdlib.h>" },
+  "annotations": {},
+  "cells": { "tls": "hosted", "per_cpu": "none" },
+  "features": { "int64_div": true, "floats": true, "line_directives": true },
+  "naming": { "prefix": "stem", "macro_case": "upper" }
+}
