@@ -1485,6 +1485,12 @@ class _Builder:
         return v
 
     def e_Call(self, e: ast.Call) -> Optional[Value]:
+        if getattr(e, "ct", None):   # a compiler-synthesized `ct::` intrinsic: never resolved to a declaration
+            args = [self.expr(a) for a in e.args]
+            t = self.temp(self.tys(e))
+            self.ncalls += 1
+            self.emit(Call(t, "ct::" + e.ct, args, None, "intrinsic", "", self.ncalls, site=e))
+            return t
         if isinstance(e.callee, ast.PathExpr) and (len(e.callee.segments) != 1 or self.lookup(e.callee.segments[0].name) is None):
             args = [self.expr(a) for a in e.args]
             decl, qual, kind = self.callee(e)
@@ -1533,7 +1539,7 @@ class _Builder:
         return self.opaque("lambda", [], e, self.tys(e))  # non-capturing: its body cannot touch this function's locals
 
     def e_MacroCall(self, e: ast.MacroCall) -> Optional[Value]:
-        if e.name.text == "untaint" and len(e.args) == 2 and isinstance(e.args[1], ast.Call):
+        if e.name.text == "untaint" and len(e.args) == 2 and isinstance(e.args[1], (ast.Call, ast.MethodCall)):
             v = self.expr(e.args[1])
             call = next((i for b in [self.cur] if b is not None for i in reversed(b.instrs) if isinstance(i, Call)), None)
             if call is not None and isinstance(e.args[0], ast.Lit):

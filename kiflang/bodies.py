@@ -78,6 +78,7 @@ _KEYWORD_PATHS = frozenset({"Self", "self"})
 _GEN_NAMES = frozenset({"Some", "None", "Vec", "Option", "parse_int"})
 # `ok(..)` and `err(..)` build the type marked `#[lang(result)]` (reloco.kif).
 _RESULT_NAMES = frozenset({"ok", "err"})
+CT_ARITY = {"select": 3, "eq": 2, "lt": 2, "mask": 1, "clamp": 2}   # compiler-synthesized `ct::` intrinsics (docs/kif-taint.md section 7)
 # `some(x)` and `none()` build the type marked `#[lang(optional)]` (reloco.kif).
 _OPTIONAL_NAMES = frozenset({"some", "none"})
 
@@ -1237,7 +1238,36 @@ class BodyChecker:
             self.d.append(dg.error(e.range, "KIFP012", "an integer cannot be cast to bool; write 'x != 0'"))
         return dst
 
+    def ct_call(self, e: ast.Call) -> Optional[Ty]:
+        """A call of a `ct::` intrinsic. They have no declaration anywhere: the compiler synthesizes their signatures here."""
+        c = e.callee
+        if not (isinstance(c, ast.PathExpr) and len(c.segments) == 2 and c.segments[0].name == "ct" and c.segments[1].name in CT_ARITY
+                and self.find("ct")[0] is None and self.sym_value(["ct", c.segments[1].name]) is None):
+            return None
+        name = c.segments[1].name
+        got = [self.expr(a) for a in e.args]
+        if len(got) != CT_ARITY[name]:
+            self.d.append(dg.error(e.range, "KIFP011", f"'ct::{name}' takes {CT_ARITY[name]} argument(s), found {len(got)}"))
+            return UNKNOWN
+        if name in ("select", "mask"):
+            self.coerce(e.args[0], got[0], BOOL, f"the condition of 'ct::{name}'")
+        vals = {"select": got[1:], "mask": []}.get(name, got)
+        j = None
+        for t in vals:
+            j = t if j is None else T.join(j, t)
+            if j is None or (T.simple(j) and not T.is_int(j) and j != INTLIT):
+                self.d.append(dg.error(e.range, "KIFP012", f"'ct::{name}' works on integers of one type, found {', '.join(map(str, vals))}"))
+                return UNKNOWN
+        if j is not None and j.name in T.INT_RANGES:
+            for a in e.args[len(e.args) - len(vals):]:
+                self.retype(a, j)
+        e.ct = name   # read by taint.py, ir.py and interp.py
+        return BOOL if name in ("eq", "lt") else Ty("usize") if name == "mask" else (j or UNKNOWN)
+
     def e_Call(self, e: ast.Call) -> Ty:
+        ct = self.ct_call(e)
+        if ct is not None:
+            return ct
         ft = self.expr(e.callee)
         got = [self.value(a) for a in e.args]
         if isinstance(e.callee, ast.PathExpr) and len(e.callee.segments) == 1 and e.callee.segments[0].name in _RESULT_NAMES \
@@ -1279,6 +1309,7 @@ class BodyChecker:
         if gp:
             params, ret = self.instantiate(e, gp, params, ret, got)
         vd = decl if decl is not None else (self.path_decl.get(id(e.callee)) if isinstance(e.callee, ast.PathExpr) else None)
+        e.decl = vd   # read by taint.py
         if vd is not None and getattr(vd, "variadic", False):
             if len(got) < len(params):
                 self.d.append(dg.error(e.range, "KIFP011", f"{name!r} takes at least {len(params)} argument(s), found {len(got)}"))
@@ -1414,6 +1445,7 @@ class BodyChecker:
             if entry.receiver == "mut" and not (rt.name == "&" and rt.mut):
                 self.d.append(dg.error(e.name.range, "KIFP020", f"{name!r} takes '&mut self': the handle must be '&mut {base}'"))
             e.recv_mode = entry.receiver  # read by the IR builder: how the call borrows its receiver
+            e.dyn = True   # a call whose target is chosen at run time (taint.py: KIFT008)
             ft = self.entry_type(entry, recv=base)
             params, ret = ft.args[:-1], ft.args[-1]
             if len(got) != len(params):
@@ -1461,6 +1493,7 @@ class BodyChecker:
         self.need_unsafe(entry.decl, None, e.name.range, "calling it")
         self.site(entry.decl, None, e.name.range)
         e.recv_mode = entry.receiver
+        e.decl = entry.decl   # read by taint.py
         recv = ()
         if entry.receiver == "value":
             recv = self.loans_of(e.receiver)

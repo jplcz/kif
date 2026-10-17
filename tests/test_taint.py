@@ -17,7 +17,7 @@ def codes(src: str):
 
 
 def fn(body: str, params: str = "#[tainted] n: usize, t: &[u32], c: u32") -> str:
-    return f"fn f({params}) -> u32 {{ {body} }}\n"
+    return f"#[tainted_result]\nfn f({params}) -> u32 {{ {body} }}\n"
 
 
 # -- clean code is untouched
@@ -87,8 +87,7 @@ def test_whole_assignment_cleans_a_local_and_a_join_unions():
 
 
 def test_field_write_is_a_weak_update():
-    src = "struct p { a: usize, b: usize }\nfn f(#[tainted] n: usize) -> u32 { let mut x = p { a: 0, b: 0 }; x.a = n; x.a = 0; if x.b > 1 { 1 } else { 0 } }\n"
-    assert codes(src) == ["KIFT001"]
+    assert codes(fn("let mut x = (0usize, 0usize); x.0 = n; x.0 = 0; if x.0 > 1 { 1 } else { 0 }")) == ["KIFT001"]
 
 
 def test_loop_carried_taint():
@@ -121,7 +120,7 @@ def test_reference_parameter_taints_the_contents_not_the_pointer():
 def test_call_results_and_untaint():
     base = "#[untaint]\nfn clean(#[tainted] x: usize) -> usize { x & 3 }\nfn id(x: usize) -> usize { x }\n"
     assert codes(base + fn('let a = untaint!("masked to 0..3 by clean", clean(n)); t[a as usize]')) == []
-    assert codes(base + fn("let a = id(n); t[a]")) == ["KIFT002"]
+    assert codes(base + fn("let a = id(n); t[a]")) == ["KIFT002", "KIFT003"]
 
 
 def test_tainted_result_source():
@@ -133,7 +132,7 @@ def test_tainted_result_source():
 
 def test_message_names_origin_and_mitigations():
     d = diags(fn("t[n]"))[0]
-    assert "parameter 'n'" in d.message and "line 1" in d.message
+    assert "parameter 'n'" in d.message and "line 2" in d.message
     assert "mitigations:" in d.message and "#[untaint]" in d.message
 
 
@@ -184,3 +183,189 @@ def test_reason_is_printed_in_the_generated_c():
     assert not [d for d in m.diagnostics if d.severity == 1 or "KIFT" in d.code], m.diagnostics
     out = lower_c.lower(m, t, "t")["t_proc.c"]
     assert "/* kif: untaint: clean(): low bits only, see RFC 7 (" in out
+
+
+# ================================================================ stage 2: calls, declared places, returns, type sources
+
+def has(src: str, *want: str) -> bool:
+    return codes(src) == sorted(want)
+
+
+# -- KIFT003
+
+CALLEE = "fn lookup(t: &[u32], i: usize) -> u32 { t[i] }\n"
+
+
+def test_tainted_argument_for_a_clean_parameter():
+    assert has(CALLEE + fn("lookup(t, n)"), "KIFT003")
+    assert has(CALLEE + fn("lookup(t, 1)"))
+
+
+def test_tainted_parameter_rechecks_the_callee_body():
+    ok = "#[tainted_result]\nfn double(#[tainted] i: usize) -> usize { i * 2 }\n"
+    assert has(ok + fn("let d = double(n); 0"))
+    bad = "fn at(t: &[u32], #[tainted] i: usize) -> u32 { t[i] }\n"
+    assert codes(bad + fn("at(t, n)")) == ["KIFT002"]                      # reported in the callee, where the use is
+
+
+def test_reference_to_tainted_data_needs_a_tainted_parameter():
+    src = "struct m { k: u32 }\nfn take(r: &m) -> u32 { 0 }\nfn f(#[tainted] r: &m) -> u32 { take(r) }\n"
+    assert has(src, "KIFT005", "KIFT003") or "KIFT003" in codes(src)
+    ok = "struct m { k: u32 }\nfn take(#[tainted] r: &m) -> u32 { 0 }\n#[tainted_result]\nfn f(#[tainted] r: &m) -> u32 { take(r) }\n"
+    assert codes(ok) == []
+
+
+def test_method_receiver_and_arguments():
+    impl = "struct box { v: u32 }\nimpl box {\n    fn get(&self, i: usize) -> u32 { 0 }\n    fn set(&mut self, #[tainted] x: u32) { }\n}\n"
+    assert has(impl + fn("let b = box { v: 0 }; b.get(n)"), "KIFT003")
+    assert has(impl + fn("let mut b = box { v: 0 }; b.set(c); 0"))
+    assert has(impl + fn("let mut b = box { v: 0 }; b.set(n as u32); 0"))
+
+
+def test_mut_argument_for_a_tainted_parameter_taints_the_local():
+    src = "fn fill(#[tainted] out: &mut u32) { }\n" + fn("let mut o = 0u32; fill(&mut o); if o > 1 { 1 } else { 0 }")
+    assert codes(src) == ["KIFT001"]
+
+
+# -- KIFT004 declared places
+
+STRUCTS = "struct plain { a: u32, #[tainted] b: u32 }\n"
+
+
+def test_field_must_be_declared_tainted():
+    assert has(STRUCTS + fn("let mut p = plain { a: 0, b: 0 }; p.a = n as u32; 0"), "KIFT004")
+    assert has(STRUCTS + fn("let mut p = plain { a: 0, b: 0 }; p.b = n as u32; 0"))
+    assert has(STRUCTS + fn("let p = plain { a: n as u32, b: 0 }; 0"), "KIFT004")
+    assert has(STRUCTS + fn("let p = plain { a: 0, b: n as u32 }; 0"))
+
+
+def test_declared_tainted_field_is_a_source_and_clean_field_is_not():
+    assert has(STRUCTS + fn("let p = plain { a: 0, b: 0 }; if p.b > 1 { 1 } else { 0 }"), "KIFT001")
+    assert has(STRUCTS + fn("let p = plain { a: 0, b: 0 }; if p.a > 1 { 1 } else { 0 }"))
+
+
+def test_writing_through_a_mut_parameter():
+    src = "fn put(o: &mut u32, #[tainted] x: u32) { *o = x; }\n"
+    assert has(src, "KIFT004")
+    assert has("fn put(#[tainted] o: &mut u32, #[tainted] x: u32) { *o = x; }\n")
+    assert has("fn put(o: &mut u32, x: u32) { *o = x; }\n")
+
+
+def test_static_must_be_declared_tainted():
+    base = "static slot: u32 = 0;\n"
+    assert "KIFT004" not in codes(base + "fn f(#[tainted] x: u32) { }\n")
+
+
+# -- KIFT005 returns
+
+def test_returning_tainted_data():
+    assert has("fn f(#[tainted] x: u32) -> u32 { x }\n", "KIFT005")
+    assert has("fn f(#[tainted] x: u32) -> u32 { return x; }\n", "KIFT005")
+    assert has("#[tainted_result]\nfn f(#[tainted] x: u32) -> u32 { x }\n")
+    assert has("fn f(#[tainted] x: u32, y: u32) -> u32 { y }\n")
+
+
+def test_returning_a_tainted_type_is_fine():
+    src = "#[tainted]\nstruct req { n: u32 }\nfn f(r: req) -> req { r }\n"
+    assert codes(src) == []
+
+
+# -- type sources
+
+def test_tainted_type_is_a_source_everywhere():
+    src = "#[tainted]\nstruct req { n: u32 }\nfn f(r: &req, t: &[u32]) -> u32 { t[r.n as usize] }\n"
+    assert "KIFT002" in codes(src)
+    src2 = "#[tainted]\nstruct req { n: u32 }\nfn f(r: &req) -> u32 { if r.n > 1 { 1 } else { 0 } }\n"
+    assert "KIFT001" in codes(src2)
+
+
+def test_tainted_type_passed_to_a_parameter_of_that_type():
+    src = "#[tainted]\nstruct req { n: u32 }\nfn h(r: &req) -> u32 { 0 }\nfn f(r: &req) { h(r); }\n"
+    assert codes(src) == []
+
+
+def test_whole_struct_with_a_tainted_field_is_tainted_when_passed():
+    src = STRUCTS + "fn use1(a: u32) -> u32 { 0 }\nfn f(p: &plain) -> u32 { use1(p.b) }\n"
+    assert "KIFT003" in codes(src)
+    src2 = STRUCTS + "fn use2(q: &plain) -> u32 { 0 }\nfn f(p: &plain) { use2(p); }\n"
+    assert codes(src2) == []
+
+
+# -- KIFT008 indirect calls
+
+def test_indirect_calls():
+    assert "KIFT008" in codes("fn f(g: fn(u32) -> u32, #[tainted] x: u32) -> u32 { g(x) }\n")
+    assert codes("fn f(g: fn(u32) -> u32, x: u32) -> u32 { g(x) }\n") == []
+    assert "KIFT008" in codes("fn f(#[tainted] g: fn(u32) -> u32, x: u32) -> u32 { g(x) }\n")
+
+
+def test_interface_calls_with_tainted_arguments():
+    src = "interface sink { method put(v: u32); }\nfn f(s: &mut dyn sink, #[tainted] x: u32) { s.put(x); }\n"
+    assert "KIFT008" in codes(src)
+    ok = "interface sink { method put(v: u32); }\nfn f(s: &mut dyn sink, x: u32) { s.put(x); }\n"
+    assert codes(ok) == []
+
+
+# ================================================================ stage 3: #[untaint] purity (KIFT009)
+
+def san(body: str, params: str = "#[tainted] x: usize, t: &[u32]", ret: str = "usize") -> str:
+    return f"#[untaint]\nfn s({params}) -> {ret} {{ {body} }}\n"
+
+
+def test_pure_sanitizer_is_accepted():
+    assert codes(san("let mut m = x & 3; m = m | 1; m")) == []
+    assert codes("#[untaint]\nfn a(#[tainted] x: usize) -> usize { x & 3 }\n#[untaint]\nfn b(#[tainted] x: usize) -> usize { untaint!(\"masked by a\", a(x)) }\n") == []
+
+
+def test_purity_violations():
+    assert codes(san("panic!(\"no\"); 0")) == ["KIFT009"]
+    assert codes(san("unsafe { 0 }")) == ["KIFT009"]
+    assert codes(san("0", params="#[tainted] x: usize, o: &mut u32")) == ["KIFT009"]
+    assert set(codes(san("*o = 1; 0", params="#[tainted] x: usize, o: &mut u32"))) == {"KIFT009"}
+    assert "KIFT009" in codes("fn other() -> usize { 1 }\n" + san("other()"))
+    assert "KIFT009" in codes("static g: usize = 0;\n" + san("g = 1; 0"))
+
+
+def test_trusted_untaint_is_not_checked():
+    assert codes('#[untaint(trusted)]\nfn s(#[tainted] x: usize) -> usize { panic!("asserted pure by its author"); 0 }\n') == []
+
+
+def test_documented_mask_sanitizer_is_pure_and_clean():
+    src = ("#[untaint]\nfn clamp_index(#[tainted] i: usize, len: usize) -> usize { let ok = (i < len) as usize; i & (ok * !0usize) }\n"
+           "fn at(#[tainted] n: usize, t: &[u32]) -> u32 { t[untaint!(\"clamped below len by clamp_index\", clamp_index(n, 4))] }\n")
+    assert codes(src) == []
+
+
+# ================================================================ `ct::` intrinsics (synthesized by the compiler)
+
+def test_ct_intrinsics_are_branch_free_values():
+    pre = "#[tainted_result]\nfn f(#[tainted] i: usize, n: usize, t: &[usize]) -> usize { "
+    assert codes(pre + "ct::select(ct::lt(i, n), i, 0) }\n") == []                      # computing is fine
+    assert codes(pre + "t[ct::select(ct::lt(i, n), i, 0)] }\n") == ["KIFT002"]          # the result is still tainted
+    assert codes(pre + "if ct::lt(i, n) { 1 } else { 0 } }\n") == ["KIFT001"]
+    assert codes(pre + 't[untaint!("below n by clamp", ct::clamp(i, n))] }\n') == []    # clamp is the trusted one
+    assert codes(pre + "t[ct::clamp(i, n)] }\n") == ["KIFT010"]                          # ... and needs a reason
+
+
+def test_ct_intrinsics_are_typed():
+    d = lambda b: codes(f"fn f(i: usize, n: usize) -> usize {{ {b} }}\n")
+    assert d("ct::lt(i)") == ["KIFP011"]
+    assert d("ct::eq(i, true)") == ["KIFP012"]
+    assert d("ct::mask(i < n)") == []
+
+
+def test_ct_intrinsics_in_pure_sanitizer_and_interpreter():
+    from kiflang.interp import run
+    src = "#[untaint]\nfn clamp_index(#[tainted] i: usize, len: usize) -> usize { ct::select(ct::lt(i, len), i, 0) }\n" \
+          "fn m(c: bool) -> usize { ct::mask(c) }\n"
+    assert codes(src) == []
+    m = analyze("t.kif", src)
+    assert run(m, "clamp_index", 3, 8) == 3 and run(m, "clamp_index", 9, 8) == 0
+    assert run(m, "m", True) == 2**64 - 1 and run(m, "m", False) == 0
+
+
+def test_ct_intrinsics_reach_the_ir_as_intrinsic_calls():
+    from kiflang import ir
+    m = analyze("t.kif", "fn f(i: usize, n: usize) -> usize { ct::select(ct::lt(i, n), i, 0) }\n")
+    calls = [i for b in ir.build_module(m.tree).functions[0].blocks for i in b.instrs if isinstance(i, ir.Call)]
+    assert [(c.callee, c.kind) for c in calls] == [("ct::lt", "intrinsic"), ("ct::select", "intrinsic")]

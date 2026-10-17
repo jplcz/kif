@@ -635,9 +635,25 @@ class Interp:
     # -- calls
 
     def x_Call(self, e: ast.Call) -> Any:
+        if getattr(e, "ct", None):
+            return self.ct(e)
         f = self.ev(e.callee)
         targs = {k: self.rt(v) for k, v in getattr(e, "targs", {}).items()}
         return self.invoke(f, [self.val(a) for a in e.args], e, targs)
+
+    def ct(self, e: ast.Call) -> Any:
+        """The `ct::` intrinsics (docs/kif-taint.md section 7); the interpreter has no timing, only the values."""
+        a = [_deref(self.val(x)) for x in e.args]
+        name = e.ct
+        if name == "select":
+            return a[1] if a[0] else a[2]
+        if name == "eq":
+            return a[0] == a[1]
+        if name == "lt":
+            return a[0] < a[1]
+        if name == "mask":
+            return wrap(-1 if a[0] else 0, "usize")
+        return a[0] if a[0] < a[1] else 0   # clamp: out of range gives 0 (the array_index_nospec idiom)
 
     def x_MethodCall(self, e: ast.MethodCall) -> Any:
         recv = self.ev(e.receiver)

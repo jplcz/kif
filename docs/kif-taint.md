@@ -325,7 +325,7 @@ Attribute summary (all validated by `facts.py`-style checks; a misplaced one is 
 | Code | Meaning |
 |------|---------|
 | `KIFT001` | a tainted value decides control flow (condition, bound, scrutinee, `&&`, `\|\|`); `?` is allowed with a barrier (rule 5a) |
-| `KIFT002` | a tainted value is used as an index, range, address, size, shift count, divisor or call target (rule 5, 6) |
+| `KIFT002` | a tainted value is used as an index, range, address, size, shift count or divisor (rule 5, 6) |
 | `KIFT003` | a tainted argument is passed to a parameter that is not `#[tainted]` (rule 7) |
 | `KIFT004` | a tainted value is written into a declared-clean place: field, `&mut` referent, `static` (rule 3) |
 | `KIFT005` | a tainted value is returned from a function that is neither `#[tainted_result]` nor `#[untaint]` (rule 7) |
@@ -411,9 +411,15 @@ docs/kif-ir-passes.md): deterministic, cacheable, parallel.
 
 Taint is a compile-time property: **no run-time representation, no cost**, except for the sanitizers' branch-free code.
 
-- **`ct` intrinsics** live in the runtime, not in each project (base runtime belongs in `../reloco`): `ct::select(c, a, b)`,
-  `ct::eq`, `ct::lt`, `ct::mask(c)`, `ct::clamp(x, n)`. Allowed on tainted operands; their result is tainted unless the intrinsic is
-  declared `#[untaint(trusted)]` (`clamp` is).
+- **`ct` intrinsics are built into the compiler.** `ct::select(c, a, b)`, `ct::eq(a, b)`, `ct::lt(a, b)`, `ct::mask(c)` (all ones or
+  zero, as `usize`) and `ct::clamp(x, n)` (`x` if `x < n`, else 0). They are *not* declared in `reloco.kif` or in any `extern`
+  block: the compiler synthesizes their signatures when it sees a `ct::name(..)` call (a project that declares its own `ct`
+  module or local shadows them). Operands are integers of one type (an untyped literal takes it); `select` and `mask` take a
+  `bool` condition. They are pure, allowed in `#[untaint]` bodies and on tainted operands, and their result is tainted like any
+  computation, except `clamp`, which is `#[untaint(trusted)]` by definition and so needs `untaint!("reason", ct::clamp(x, n))`.
+  In the IR a `ct::` call is `Call(kind="intrinsic")`. The C backend emits a branch-free expression wrapped in the value barrier
+  (stage 5); the C++ backend emits a call into reloco's constant-time helpers, so the runtime stays reloco's and no kif-level
+  contract mirrors it.
 - **Value barrier.** A C compiler may turn `mask & x` back into a branch. The emitter wraps the result of a `ct::` operation in the
   target's `taint.barrier` macro, e.g. `__asm__("" : "+r"(v))`, which is opaque to the optimizer. Per target:
 
@@ -534,8 +540,8 @@ path is a place a reviewer sees, and the set is small.
 
 1. **Attributes and checker plumbing.** Parse and validate the attributes (`KIFT007`), `Ty.tainted`, field-sensitive local taint in
    `bodies.py`; sinks `KIFT001` / `KIFT002` for locals and parameters only. Tests: one per sink, one per propagation rule.
-2. **Calls and places.** Rule 7 (`KIFT003`, `KIFT005`, `KIFT008`) and rule 3 (`KIFT004`), `#[tainted_result]`, struct/field taint.
-3. **Sanitizers.** `#[untaint]` with checked, pure bodies (`KIFT009`), `#[untaint(trusted)]`, the `ct` intrinsics and their reloco implementation.
+2. **Calls and places.** Rule 7 (`KIFT003`, `KIFT005`, `KIFT008`) and rule 3 (`KIFT004`), `#[tainted_result]`, struct/field taint. **Done.** Limits: a local carries one taint (no per-field), prelude/builtin methods are not annotated (a tainted receiver or argument gives `KIFT003`), and lambdas are not walked.
+3. **Sanitizers.** `#[untaint]` with checked, pure bodies (`KIFT009`), `#[untaint(trusted)]`, the `ct` intrinsics. **Done:** `KIFT009` is checked (`&mut` parameter, store through a reference or to a static/parameter, `unsafe`, lambdas, any macro but `untaint!`, any call that is not `#[untaint]` or in the `ct::`/`spec::` namespaces) and `#[untaint(trusted)]` bodies are skipped.  The `ct::` intrinsics are typed, tainted-checked, lowered to the IR and interpreted; their C emission is stage 5.
 4. **IR backstop.** The `taint` pass, `check_module` wiring, `--explain-taint`.
 5. **Codegen.** `taint.barrier` and friends in the target schema, barrier emission, a compiled `tests/c` case that keeps a `select`
    branch-free (inspect the generated code in the test, not only its output).
