@@ -34,8 +34,8 @@ step that adds wipes fails it until the counts there are raised.
 | Stage 1, declarations (done) | diagnostics: `errors.kif` reports `KIFW001`-`KIFW005`; `demo.kif` is clean |
 | Stage 4, target section (done) | the last block, "wipe plan": macro, body, volatile body, header, error |
 | Stage 2, `Wipe` instruction and `wipes` pass (done) | `wipe %acc  // last use of 'acc'` lines in `demo.ir`, after the last use of each secure variable (`checksum` wipes `acc` once, after the loop) |
-| Stage 3, secure structs | `session_key_drop_fields` wipes `bytes` and `counter`, and skips `owner` |
+| Stage 3, secure structs (done) | `session_key_drop_fields` wipes `bytes` and `counter`, and skips `owner`; `nonce_sum` calls `nonce_drop(&n)` at scope exit |
 | Stage 5, C emission (done except `volatile`) | `#define KIF_SECURE_WIPE(p, n) ...` and a commented call at every wipe in `demo_proc.c` |
 | Stage 6, guard | a pass that removes a wipe is rejected with `KIFW010` |
 
-`demo.kif` currently has 5 wipes (`acc`, `a`, `b`, `secret`, `buf`) in the IR and in the C. The secure struct and the `volatile` variant show up with stage 3 and the `volatile` step of stage 5.
+`demo.kif` currently has 5 wipes in the IR (`acc`, `a`, `b`, `secret`, `buf`) and 9 in the C (those plus the four field wipes of `session_key` and `nonce`). The `volatile` variant is the remaining part of stage 5.

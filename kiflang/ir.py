@@ -821,6 +821,7 @@ def drop_types(items) -> frozenset:
     drops = {(it.target.text if isinstance(it.target, ast.PathType) else "") for it in items
              if isinstance(it, ast.ImplDecl) and it.iface is None and any(isinstance(f, ast.FnDecl) and f.name.text == "drop" for f in it.items)}
     drops &= set(structs)
+    drops |= {n for n, st in structs.items() if any(a.name.text == "secure_wipe" for a in st.attrs)}  # a secure struct has a generated drop
     while True:
         more = {n for n, st in structs.items() if n not in drops and any(owns_type(parse_type(type_text(f.ty)), drops) for f in st.fields)}
         if not more:

@@ -2,3 +2,4 @@ checksum=6
 derive=64
 mix=255
 scratch=0
+nonce_sum=12

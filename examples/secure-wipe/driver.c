@@ -11,5 +11,6 @@ int main(void)
 	printf("derive=%llu\n", (unsigned long long)derive(5));
 	printf("mix=%llu\n", (unsigned long long)mix(0xF0, 0x0F));
 	printf("scratch=%u\n", (unsigned)scratch());
+	printf("nonce_sum=%u\n", (unsigned)nonce_sum(7));
 	return 0;
 }

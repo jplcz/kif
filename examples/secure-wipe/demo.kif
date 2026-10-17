@@ -50,3 +50,13 @@ fn scratch() -> u8 {
     let buf: [u8; 16] = [0; 16];
     buf[0]
 }
+
+// A secure struct on the stack: its generated drop wipes both fields when `n` goes out of scope (rules W4, W5).
+#[secure_wipe]
+struct nonce { bytes: [u8; 16], counter: u32 }
+
+#[export]
+fn nonce_sum(seed: u8) -> u32 {
+    let n: nonce = nonce { bytes: [seed; 16], counter: 5 };
+    (n.bytes[3] as u32) + n.counter
+}

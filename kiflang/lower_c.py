@@ -1434,6 +1434,31 @@ static __inline void {P}_drop({V} *v)
             raise LowerError(f"target {self.t.name!r} has no panic.macro, but this file can trap")
         return [f"#ifndef KIF_HELPER_{k}\n#define KIF_HELPER_{k}\n{v}\n#endif" for k, v in self.helpers.items() if k.startswith("KIF_TOENUM_")]
 
+    @staticmethod
+    def secure(sd) -> bool:
+        return any(a.name.text == "secure_wipe" for a in sd.attrs)
+
+    def wipe_stmts(self, n: str, sd) -> List[str]:
+        """The generated drop of a `#[secure_wipe]` struct `n`: one commented wipe per field that is not `#[wipe_exempt]`, in declaration order
+        (rule W5); a field that is itself a secure struct is wiped by its own drop. Exempt fields are released afterwards like any field."""
+        plan = self.t.wipe()
+        if plan.error:
+            raise LowerError(f"KIFW006: target {self.t.name!r} cannot wipe, but struct {n} is #[secure_wipe]: {plan.error}")
+        self.uses_wipe = True
+        out = []
+        for f in sd.fields:
+            if any(a.name.text == "wipe_exempt" for a in f.attrs):
+                continue
+            nm = f"self->{f.name.text}"
+            inner = self.structs.get(f.ty.text) if isinstance(f.ty, ast.PathType) else None
+            if inner is not None and self.secure(inner):
+                out.append(f"	/* kif: secure wipe: {n}.{f.name.text} ({f.ty.text}), by its own generated drop ({self.file}:{f.name.range.start.line + 1}) */")
+                out.append(f"	{f.ty.text}_drop(&{nm});")
+                continue
+            out.append(f"	/* kif: secure wipe: {n}.{f.name.text} ({ir.type_text(f.ty)}), generated drop of #[secure_wipe] struct {n} ({self.file}:{f.name.range.start.line + 1}) */")
+            out.append(f"	{plan.macro}(&{nm}, sizeof({nm}));")
+        return out
+
     def drop_wrappers(self) -> Tuple[List[str], List[str]]:
         """`S_drop_fields` and `S_drop` for structs that own something: the user's `drop` body first, then each owned field, in reverse order (C++ order)."""
         protos, bodies = [], []
@@ -1450,6 +1475,8 @@ static __inline void {P}_drop({V} *v)
                     rel.append(f"\t{self.drop_stmt(nm, f.ty)}\n\t{nm} = NULL;")
                 else:
                     rel.append("\t" + self.drop_stmt(nm, f.ty))
+            if self.secure(self.structs[n]):
+                rel = self.wipe_stmts(n, self.structs[n]) + rel
             call = f"\t{n}_drop_body(self);\n" if user else ""
             protos += [f"static __inline void {n}_drop_fields(struct {n} *self);", f"static __inline void {n}_drop(struct {n} *self);"]
             bodies.append(f"static __inline void {n}_drop_fields(struct {n} *self)\n{{\n" + "\n".join(rel) + "\n}")
@@ -1560,6 +1587,10 @@ static __inline void {P}_drop({V} *v)
     def find_dropable(self) -> None:
         """Fill `owned` and `dropable` (after `collect`): the structs for which `S_drop` exists."""
         self.dropable = {n for n in self.structs if self.methods.get((n, "drop")) is not None}
+        for n, sd in self.structs.items():
+            if self.secure(sd):
+                self.owned[n] = [f for f in sd.fields if self.owning_field(f.ty)]  # the generated drop exists even with nothing to release
+                self.dropable.add(n)
         changed = True
         while changed:
             changed = False

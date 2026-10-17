@@ -14,7 +14,7 @@ pytestmark = pytest.mark.skipif(shutil.which("gcc") is None, reason="gcc not ava
 DEMO = Path(__file__).resolve().parent.parent / "examples" / "secure-wipe"
 EXPECTED_ERRORS = ["KIFW001", "KIFW001", "KIFW002", "KIFW003", "KIFW004", "KIFW004", "KIFW004", "KIFW005"]
 WIPES_IN_IR = 5  # step: the `wipes` pass inserts them
-WIPES_IN_C = 5  # step: C emission
+WIPES_IN_C = 9  # step: C emission
 
 
 def load():
@@ -34,3 +34,14 @@ def test_demo(target):
     if target == "c":
         assert res["gcc"] == 0, (res["out"] / "gcc.log").read_text()
         assert res["run"] == 0 and res["output"] == res["expected"]
+
+
+def test_secure_struct_drop_wipes_each_field_but_not_exempt_ones():
+    res = load().run("c")
+    h = (res["out"] / "demo_proc.h").read_text()
+    body = h[h.index("session_key_drop_fields(struct session_key *self)\n{"):]
+    body = body[:body.index("\n}")]
+    assert "sizeof(self->bytes)" in body and "sizeof(self->counter)" in body
+    assert "sizeof(self->owner)" not in body and "node_delete(self->owner)" in body
+    assert body.index("sizeof(self->counter)") < body.index("node_delete")  # wipe first, then the exempt field is released
+    assert "nonce_drop(&n);" in (res["out"] / "demo_proc.c").read_text()
