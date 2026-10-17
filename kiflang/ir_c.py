@@ -1675,6 +1675,12 @@ class _Emit:
                 from .lower_c import LowerError
 
                 raise LowerError(f"KIFT012: the C output of {fn.name}() broke the constant-time shape: " + "; ".join(bad))
+        wanted = sum(1 for _, i in fn.instrs() if isinstance(i, ir.Wipe))
+        kept = len(re.findall(rf"\b{re.escape(lw.t.wipe().macro)}(?:_VOLATILE)?\(&", "\n".join(rendered)))
+        if wanted != kept:
+            from .lower_c import LowerError
+
+            raise LowerError(f"KIFW010: the C output of {fn.name}() has {kept} secure wipe(s) where the IR has {wanted}: the text folder dropped or duplicated one (docs/kif-secure-wipe.md rule W11)")
         for t in used_temps.values():
             if t.id in self.strs or t.id in self.errs or t.id in self.alias or t.id in self.allocs or t.id in self.rinc or t.type.kind == irtypes.UNIT:
                 continue

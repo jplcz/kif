@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Callable, ClassVar, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from . import diagnostics as dg
-from . import ctguard, ir
+from . import ctguard, ir, wipeguard
 
 KINDS = ("analysis", "transform", "check")
 
@@ -182,12 +182,16 @@ def run_function(fn: ir.Function, names: Sequence[str], resolve: Optional[Callab
                 stats.append(Stat(r, 0.0, True))
         guarded = p.kind == "transform" and ctguard.has_region(fn)
         before = ctguard.snapshot(fn, resolve, ctx.config) if guarded else None
+        wiped = wipeguard.snapshot(fn) if p.kind == "transform" and wipeguard.has_wipes(fn) else None
         t0 = time.perf_counter()
         # a pass that is not an analysis leaves its return value (often None) as a marker, so it counts as run
         ctx.results[n] = p.run(ctx)
         if guarded:
             for why in ctguard.verify(fn, before, resolve, ctx.config):
                 ctx.report("KIFT012", f"internal: pass '{n}' broke the constant-time shape of {fn.name}(): {why} (docs/kif-taint.md section 7a)", fn.node.name if fn.node is not None else None)
+        if wiped is not None:
+            for why in wipeguard.verify(fn, wiped):
+                ctx.report("KIFW010", f"internal: pass '{n}' broke a secure wipe in {fn.name}(): {why} (docs/kif-secure-wipe.md rule W11)", fn.node.name if fn.node is not None else None)
         stats.append(Stat(n, time.perf_counter() - t0))
         for gone in p.invalidates:
             ctx.results.pop(gone, None)

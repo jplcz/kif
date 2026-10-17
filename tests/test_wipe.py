@@ -173,3 +173,54 @@ def test_volatile_reaches_the_wipe_instruction():
     assert "wipe %a volatile" in t
     assert "volatile" not in wiped("fn f() -> u32 { #[secure_wipe] let a: u32 = 1; a }")
     assert "wipe %a volatile" in wiped("#[secure_wipe(volatile)] fn f() -> u32 { let a: u32 = 1; a }")
+
+
+# ---- the wipe guard (rule W11)
+
+import pytest
+
+
+@pytest.fixture
+def scratch(monkeypatch):
+    from kiflang import passes
+
+    monkeypatch.setattr(passes, "REGISTRY", dict(passes.REGISTRY))
+    return passes.REGISTRY
+
+def _guarded(scratch, mutate):
+    from kiflang import ir, passes, symbols
+
+    def run(self, ctx):
+        mutate(ctx.fn)
+
+    passes.register(type("rogue", (passes.Pass,), {"name": "rogue", "kind": "transform", "after": ("wipes",), "run": run}))
+    src = "fn f(c: bool) -> u32 { #[secure_wipe] let a: u32 = 1; let b: u32 = a + 1; b }"
+    mod = ir.build_module(symbols.analyze("/t/main.kif", src, None).tree)
+    return passes.run_function(mod.functions[0], ["wipes", "rogue"])
+
+
+def _wipe_of(fn):
+    return next((b, n) for b in fn.blocks for n, i in enumerate(b.instrs) if type(i).__name__ == "Wipe")
+
+
+def test_a_pass_that_removes_a_wipe_is_rejected(scratch):
+    r = _guarded(scratch, lambda fn: (lambda bn: bn[0].instrs.pop(bn[1]))(_wipe_of(fn)))
+    assert [d.code for d in r.diagnostics] == ["KIFW010"] and "removed" in r.diagnostics[0].message
+
+
+def test_a_pass_that_moves_or_duplicates_a_wipe_is_rejected(scratch):
+    def move(fn):
+        b, n = _wipe_of(fn)
+        b.instrs.insert(0, b.instrs.pop(n))
+
+    def dup(fn):
+        b, n = _wipe_of(fn)
+        b.instrs.insert(n, b.instrs[n])
+
+    assert [d.code for d in _guarded(scratch, move).diagnostics] == ["KIFW010"]
+    scratch.pop("rogue")
+    assert [d.code for d in _guarded(scratch, dup).diagnostics] == ["KIFW010"]
+
+
+def test_a_pass_that_changes_nothing_else_is_accepted(scratch):
+    assert _guarded(scratch, lambda fn: None).diagnostics == []

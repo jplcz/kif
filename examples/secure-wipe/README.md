@@ -36,6 +36,6 @@ step that adds wipes fails it until the counts there are raised.
 | Stage 2, `Wipe` instruction and `wipes` pass (done) | `wipe %acc  // last use of 'acc'` lines in `demo.ir`, after the last use of each secure variable (`checksum` wipes `acc` once, after the loop) |
 | Stage 3, secure structs (done) | `session_key_drop_fields` wipes `bytes` and `counter`, and skips `owner`; `nonce_sum` calls `nonce_drop(&n)` at scope exit |
 | Stage 5, C emission (done) | `#define KIF_SECURE_WIPE(p, n) ...` and a commented call at every wipe in `demo_proc.c` |
-| Stage 6, guard | a pass that removes a wipe is rejected with `KIFW010` |
+| Stage 6, guard (done) | a pass that removes a wipe is rejected with `KIFW010` |
 
 `demo.kif` currently has 5 wipes in the IR (`acc`, `a`, `b`, `secret`, `buf`) and 9 in the C (those plus the four field wipes of `session_key` and `nonce`). `scratch` uses `KIF_SECURE_WIPE_VOLATILE`.
