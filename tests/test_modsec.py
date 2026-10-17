@@ -102,7 +102,20 @@ def test_analysis_results_of_the_compiled_bodies():
     assert fns["unproved"]["kept_checks"] == ["index"] and fns["unproved"]["proved"] == []
     assert fns["proved"]["kept_checks"] == [] and fns["proved"]["proved"] == ["index"]
     assert fns["unproved"]["ir_hash"].startswith("sha256:") and fns["unproved"]["ir_hash"] != fns["proved"]["ir_hash"]
-    assert fns["ring::len"]["kept_checks"] == "unknown" and fns["ring::len"]["ir_hash"] is None   # methods are not built to IR yet
+    assert fns["ring::len"]["kept_checks"] == [] and fns["ring::len"]["ir_hash"].startswith("sha256:")   # methods are built to IR too
+
+
+def test_methods_are_keyed_by_their_declaration_not_their_name():
+    """Two types with a method of one name, and a free function of that name, each get their own facts and hash."""
+    fns = section("""
+struct a { n: u32 = 0 }
+struct b { n: u32 = 0 }
+impl a { fn get(&self, v: &[u32], i: usize) -> u32 { v[i] } }
+impl b { fn get(&self, v: &[u32], i: usize) -> u32 { if i < v.len() { v[i] } else { 0 } } }
+fn get(x: u32) -> u32 { 2 * x }
+""")["functions"]
+    assert fns["a::get"]["kept_checks"] == ["index"] and fns["b::get"]["kept_checks"] == [] and fns["b::get"]["proved"] == ["index"]
+    assert len({fns[k]["ir_hash"] for k in ("a::get", "b::get", "get")}) == 3
 
 
 def test_header_has_compiler_identity_and_digests():

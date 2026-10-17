@@ -188,7 +188,7 @@ class Call(Instr):
     flows: Optional[List[int]] = None  # which operands the result may borrow from (-1 the receiver, k the k-th of `args`); None: unknown, assume all
     ensures: Optional[Tuple[str, int]] = None  # `#[ensures(f)]` of the callee: (fact, n) the result has (`some`, `non_null`, `non_empty`, `len_ge` with n >= 1 elements)
     preserves: Optional[List[int]] = None  # `#[preserves]` of the callee: the operands (-1 receiver, k the k-th of `args`) that keep every fact the caller knew
-    taint: str = ""  # what the callee's declaration says about its result: `untaint` (clean even from tainted input) or `tainted_result`
+    taint: str = ""  # what the callee's declaration says about its result: `untaint` (clean even from tainted input), `tainted_result`, or `clean` (the callee's body check proved its result clean, `taint.summarized`)
     reason: str = ""  # the reason written in `untaint!("reason", f(..))`: the code generators print it as an audit comment
     unguarded: bool = False  # set by the `elide` pass: every fact the callee requires is proved here, so the call may skip the callee's guard (`F__nofacts`)
 
@@ -1497,7 +1497,9 @@ class _Builder:
             for a in getattr(node, "attrs", None) or ():
                 if a.name.text in ("untaint", "tainted_result"):
                     return a.name.text
-        return ""
+        from .taint import summarized
+
+        return "clean" if summarized(getattr(e, "decl", None) or decl) else ""
 
     def cell_access(self, e: ast.MethodCall):
         """`CELL.with(|v| body)` / `with_mut`: a `Cell` address, then the closure body inline in a scope that binds `v` to it. The value

@@ -146,12 +146,13 @@ def declared(tree, exports_all: bool) -> Tuple[Dict[str, Dict[str, Any]], Dict[s
 # ---------------------------------------------------------------- the vendor's analysis of the compiled bodies
 
 
-def _analysis(tree) -> Dict[str, Dict[str, Any]]:
-    """`barriers`, `kept_checks`, `proved` and `ir_hash` per function the IR builder handles; the rest are `unknown`."""
+def _analysis(tree) -> Dict[int, Dict[str, Any]]:
+    """`barriers`, `kept_checks`, `proved` and `ir_hash` per function or method the IR builder handles, keyed by `id(declaration)` (two
+    types may have a method of the same name); the rest are `unknown`."""
     from . import irhash, ir, passes
 
-    raw = {name: h for name, h in irhash.module_hashes(passes.run_module(tree, []).module)}
-    out: Dict[str, Dict[str, Any]] = {}
+    raw = {id(f.node): irhash.ir_hash(f) for f in passes.run_module(tree, []).module.functions}
+    out: Dict[int, Dict[str, Any]] = {}
     for f in passes.run_module(tree, passes.pipeline("default")).module.functions:
         kept, proved = set(), set()
         explicit = implicit = 0
@@ -164,8 +165,8 @@ def _analysis(tree) -> Dict[str, Dict[str, Any]]:
         for c in f.elided:
             if not (c.tag and not c.call):
                 (proved if c.proof is not None else kept).add(c.kind)
-        out[f.name] = {"barriers": {"explicit": explicit, "implicit": implicit}, "kept_checks": sorted(kept), "proved": sorted(proved - kept),
-                       "ir_hash": raw.get(f.name)}
+        out[id(f.node)] = {"barriers": {"explicit": explicit, "implicit": implicit}, "kept_checks": sorted(kept), "proved": sorted(proved - kept),
+                       "ir_hash": raw.get(id(f.node))}
     return out
 
 
@@ -176,10 +177,11 @@ def build(mod, target_name: str, profile_name: str, language: str) -> Dict[str, 
     exports_all, sinks = taint.policy(getattr(mod, "cfg", None))
     fns, types = declared(mod.tree, exports_all)
     info = _analysis(mod.tree)
+    decls = {key: f for key, f, _ in _decls(mod.tree)}
     for name, entry in fns.items():
         if entry.get("embedded"):
             continue
-        entry.update(info.get(name, {"barriers": None, "kept_checks": UNKNOWN, "proved": UNKNOWN, "ir_hash": None}))
+        entry.update(info.get(id(decls[name]), {"barriers": None, "kept_checks": UNKNOWN, "proved": UNKNOWN, "ir_hash": None}))
     return {
         "target": target_name, "profile": profile_name, "language": language,
         "taint": {"exports": "all" if exports_all else "declared", "sinks": sorted(sinks)},

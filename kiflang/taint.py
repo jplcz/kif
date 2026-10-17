@@ -155,6 +155,7 @@ def _field_tainted(f) -> bool:
     return _has(f.attrs, "tainted")
 
 
+_SCALARS = frozenset(("i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64", "usize", "bool"))
 DEFAULT_SINKS = frozenset(("div", "rem", "shift"))
 
 
@@ -163,6 +164,15 @@ def policy(env) -> tuple:
     values = getattr(env, "values", None) or {}
     sinks = values.get("taint_sinks")
     return "all" in values.get("taint_exports", ()), DEFAULT_SINKS if sinks is None else frozenset(sinks)
+
+
+def summarized(decl) -> bool:
+    """The callee's own body check already proved its result clean: it has a body that was walked with every `#[tainted]` parameter
+    tainted, a plain integer or bool result (so no taint travels in the result type), and is not `#[tainted_result]`. Tainted arguments
+    can only reach `#[tainted]` parameters (KIFT003), so such a call cannot return tainted data (docs/kif-taint.md rule 6)."""
+    ret = getattr(decl, "ret", None)
+    return (isinstance(decl, ast.FnDecl) and decl.body is not None and isinstance(ret, ast.PathType) and len(ret.segments) == 1
+            and ret.text in _SCALARS and not _has(getattr(decl, "attrs", []), "tainted_result"))
 
 
 class _Walk:
@@ -221,6 +231,11 @@ class _Walk:
     @staticmethod
     def type_origin(d) -> Origin:
         return Origin(f"type {d.name.text!r}", _line(d.name))
+
+    def carries(self, d) -> Taint:
+        """Why the struct `d` is tainted as a whole (the type is `#[tainted]`, or any field is), else None. A tainted struct has no clean part:
+        every field read yields tainted data and every field may be written with it."""
+        return self.type_origin(d) if _has(d.attrs, "tainted") else self.any_field(d)
 
     @staticmethod
     def any_field(d) -> Taint:
@@ -425,12 +440,9 @@ class _Walk:
             root, declared = self.target(e.expr, v if d is None else None, rng)
             if d is not None:
                 f = next((x for x in d.fields if x.name.text == e.name.text), None)
-                if f is not None and not _has(d.attrs, "tainted"):
-                    if _field_tainted(f):
-                        return root, True
-                    self.sink(v, rng, "KIFT004", f"is stored in field {d.name.text}.{f.name.text}, which is not #[tainted]")
-                    return root, True
                 if f is not None:
+                    if self.carries(d) is None:
+                        self.sink(v, rng, "KIFT004", f"is stored in field {d.name.text}.{f.name.text}, and the struct {d.name.text} is not tainted")
                     return root, True
             return root, declared
         if isinstance(e, ast.Index):
@@ -488,6 +500,9 @@ class _Walk:
             if t is not None and not self.accepts(p):
                 self.err("KIFT003", a.range, t, f"is passed to parameter {p.name.text!r} of {name}(), which is not declared #[tainted]")
 
+    def refused(self, params, taints) -> bool:
+        return any(t is not None and not self.accepts(p) for p, t in zip(params, taints))
+
     def written_by(self, name: str, params, exprs, rng) -> None:
         """A `&mut` argument for a #[tainted] parameter: the callee may store tainted data there, so the local becomes tainted."""
         for p, a in zip(params, exprs):
@@ -498,11 +513,13 @@ class _Walk:
                 if isinstance(root, ast.PathExpr) and len(root.segments) == 1:
                     self.update(root.segments[0].name, Origin(f"written by {name}()", rng.start.line + 1), False)
 
-    def result_of(self, name: str, attrs: Optional[list], args: Taint, rng) -> Taint:
+    def result_of(self, name: str, attrs: Optional[list], args: Taint, rng, decl=None) -> Taint:
         if attrs is not None and _has(attrs, "untaint"):
             return None
         if attrs is not None and _has(attrs, "tainted_result"):
             return Origin(f"result of {name}()", rng.start.line + 1)
+        if summarized(decl):
+            return None
         return args
 
     def e_Call(self, e: ast.Call) -> Taint:
@@ -525,7 +542,8 @@ class _Walk:
             params = [q for q in decl.params if not q.receiver]
             self.check_args(name, params, e.args, taints)
             self.written_by(name, params, e.args, e.range)
-            return self.result_of(name, attrs, args, e.range)
+            # a refused argument (KIFT003) keeps the result tainted, so the follow-on errors still show
+            return self.result_of(name, attrs, args, e.range, None if self.refused(params, taints) else decl)
         if isinstance(c, ast.PathExpr) and len(c.segments) == 1 and self.find(c.segments[0].name) is None:
             return args     # `some(x)`, `ok(x)` and the like: construction, not a call
         t = self.expr(c)
@@ -551,15 +569,18 @@ class _Walk:
         if attrs is not None and _has(attrs, "untaint") and id(e) not in self.wrapped:
             self.bc.d.append(dg.error(e.range, "KIFT010", f"{name}() is an #[untaint] function: a call needs a reason, "
                                       f'written `untaint!("why this data may be treated as clean", x.{name}(..))`'))
+        refused = False
         if decl is not None:
             ps = list(decl.params)
             rp = next((q for q in ps if q.receiver), None)
             if recv is not None and rp is not None and not (_has(rp.attrs, "tainted") or self.recv_carries(e.receiver)):
                 self.err("KIFT003", e.receiver.range, recv, f"is the receiver of {name}(), whose `self` is not declared #[tainted]")
+                refused = True
             params = [q for q in ps if not q.receiver]
             self.check_args(name, params, e.args, taints)
             self.written_by(name, params, e.args, e.range)
-        return self.result_of(name, attrs, args, e.range)
+            refused = refused or self.refused(params, taints)
+        return self.result_of(name, attrs, args, e.range, None if refused else decl)
 
     def recv_carries(self, e) -> bool:
         """The receiver's struct type carries taint itself, so its methods take tainted values by nature."""
@@ -571,8 +592,8 @@ class _Walk:
         d = self.struct_of(e.expr)
         if d is not None:
             f = next((x for x in d.fields if x.name.text == e.name.text), None)
-            if f is not None and _field_tainted(f):
-                t = _join(t, Origin(f"field {d.name.text}.{f.name.text}", _line(f.name)))
+            if f is not None:
+                t = _join(t, self.carries(d))
         return t
 
     def e_Index(self, e: ast.Index) -> Taint:
@@ -595,8 +616,8 @@ class _Walk:
             fd = next((x for x in d.fields if x.name.text == f.name.text), None) if d is not None else None
             if d is None:
                 t = _join(t, vt)
-            elif fd is not None and not _field_tainted(fd) and not _has(d.attrs, "tainted"):
-                self.sink(vt, v.range, "KIFT004", f"initialises field {d.name.text}.{fd.name.text}, which is not #[tainted]")
+            elif fd is not None and self.carries(d) is None:
+                self.sink(vt, v.range, "KIFT004", f"initialises field {d.name.text}.{fd.name.text}, and the struct {d.name.text} is not tainted")
         if e.base is not None:
             t = _join(t, self.expr(e.base))
         return t

@@ -25,9 +25,11 @@ class AttestError(ValueError):
 
 def hashes(mod) -> Dict[str, str]:
     """`{function name: ir hash}` of an analysed module (raw IR, the same value as `kif ir --hash` and the C comment)."""
-    from . import irhash, passes
+    from . import irhash, modsec, passes
 
-    return dict(irhash.module_hashes(passes.run_module(mod.tree, []).module))
+    by_node = {id(f.node): irhash.ir_hash(f) for f in passes.run_module(mod.tree, []).module.functions}
+    # keyed like `security.functions` (`name`, `Type::name`, `<Type as Iface>::name`), so equal method names on different types stay apart
+    return {key: by_node[id(d)] for key, d, _ in modsec._decls(mod.tree) if id(d) in by_node}
 
 
 def build(mod, target_name: str, profile: Optional[str] = None, sign: Optional[Tuple[bytes, Optional[bytes]]] = None) -> bytes:

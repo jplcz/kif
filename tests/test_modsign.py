@@ -382,12 +382,15 @@ def _verify(args):
 
 def test_kifa_is_deterministic_and_matches_the_ir_hash(pki, tmp_path, forced):
     from kiflang import attest, irhash, passes
+    from kiflang.symbols import analyze
 
     a, mod = _attest(tmp_path, pki)
     b, _ = _attest(tmp_path, pki)
     assert a == b
     h = attest.decode(a)
     assert h["functions"] == dict(irhash.module_hashes(passes.run_module(mod.tree, []).module))
+    both = attest.hashes(analyze("a.kif", "struct a { n: u32 = 0 }\nstruct b { n: u32 = 0 }\nimpl a { fn f(&self) -> u32 { 1 } }\nimpl b { fn f(&self) -> u32 { 2 } }\n"))
+    assert set(both) == {"a::f", "b::f"} and both["a::f"] != both["b::f"]
     assert h["target"] == "c" and "signature" in h
 
 

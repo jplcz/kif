@@ -232,16 +232,26 @@ def test_mut_argument_for_a_tainted_parameter_taints_the_local():
 STRUCTS = "struct plain { a: u32, #[tainted] b: u32 }\n"
 
 
-def test_field_must_be_declared_tainted():
-    assert has(STRUCTS + fn("let mut p = plain { a: 0, b: 0 }; p.a = n as u32; 0"), "KIFT004")
-    assert has(STRUCTS + fn("let mut p = plain { a: 0, b: 0 }; p.b = n as u32; 0"))
-    assert has(STRUCTS + fn("let p = plain { a: n as u32, b: 0 }; 0"), "KIFT004")
+PLAIN_STRUCT = "struct clean { a: u32, b: u32 }\n"
+
+
+def test_a_struct_is_tainted_all_or_nothing_so_any_field_may_hold_tainted_data():
+    for field in ("a", "b"):
+        assert has(STRUCTS + fn(f"let mut p = plain {{ a: 0, b: 0 }}; p.{field} = n as u32; 0"))
+    assert has(STRUCTS + fn("let p = plain { a: n as u32, b: 0 }; 0"))
     assert has(STRUCTS + fn("let p = plain { a: 0, b: n as u32 }; 0"))
 
 
-def test_declared_tainted_field_is_a_source_and_clean_field_is_not():
-    assert has(STRUCTS + fn("let p = plain { a: 0, b: 0 }; if p.b > 1 { 1 } else { 0 }"), "KIFT001")
-    assert has(STRUCTS + fn("let p = plain { a: 0, b: 0 }; if p.a > 1 { 1 } else { 0 }"))
+def test_a_struct_without_any_tainted_field_refuses_tainted_data():
+    assert has(PLAIN_STRUCT + fn("let mut p = clean { a: 0, b: 0 }; p.a = n as u32; 0"), "KIFT004")
+    assert has(PLAIN_STRUCT + fn("let p = clean { a: n as u32, b: 0 }; 0"), "KIFT004")
+
+
+def test_every_field_of_a_tainted_struct_is_a_source():
+    """`a` carries no attribute, yet reading it is as tainted as reading `b`: the struct is tainted as a whole."""
+    for field in ("a", "b"):
+        assert has(STRUCTS + fn(f"let p = plain {{ a: 0, b: 0 }}; if p.{field} > 1 {{ 1 }} else {{ 0 }}"), "KIFT001")
+    assert has(PLAIN_STRUCT + fn("let p = clean { a: 0, b: 0 }; if p.a > 1 { 1 } else { 0 }"))
 
 
 def test_writing_through_a_mut_parameter():
@@ -638,3 +648,22 @@ def test_ir_round_trip_keeps_untaint_reasons_and_the_sink_policy():
     calls = [i for _, i in f.instrs() if isinstance(i, ir.Call) and i.taint]
     assert [(c.taint, c.reason) for c in calls] == [("untaint", "masked to 0..3")]
     assert f.params[0].taint
+
+
+# -- interprocedural summary: a callee whose body check proved its result clean
+
+SUMMARY = """
+fn pick(#[tainted] a: u32, b: u32) -> u32 { b }
+#[tainted_result]
+fn raw() -> u32 { 5 }
+"""
+
+
+def test_a_call_whose_callee_returns_only_clean_data_has_a_clean_result():
+    assert codes(SUMMARY + "fn g(t: &[u32]) -> u32 { let x = raw(); t[pick(x, 1) as usize] }") == []
+
+
+def test_the_summary_does_not_hide_a_tainted_result_declaration_or_a_bodyless_callee():
+    assert codes(SUMMARY.replace("fn pick", "#[tainted_result]\nfn pick") + "fn g(t: &[u32]) -> u32 { let x = raw(); t[pick(x, 1) as usize] }") == ["KIFT002"]
+    ext = 'extern "C" { fn probe(#[tainted] a: u32, b: u32) -> u32; }\n'
+    assert "KIFT002" in codes(ext + "#[tainted_result]\nfn raw() -> u32 { 5 }\nfn g(t: &[u32]) -> u32 { let x = raw(); t[probe(x, 1) as usize] }")

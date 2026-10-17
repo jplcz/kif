@@ -150,7 +150,7 @@ a loop in `extends` is an error. Check with `kif target check`; show the result 
 | `features.int64_div` | bool | `false`: 64-bit `/` and `%` are refused (KIFP051); true needs a libgcc-free division. |
 | `features.floats` | bool | Whether floating point may be used. |
 | `features.line_directives` | bool | Emit `#line` directives that point at the `.kif`. |
-| `features.doc_comments` | bool | Default true. The `//` comment lines directly above a function (and its attributes) become a `/** ... */` comment on its prototype in the header and on its definition. `*/` inside the text is written `* /`. `false` omits them. |
+| `features.doc_comments` | bool | Default true. The `//` comment lines directly above a function, struct, field, enum, enumerator or constant (and its attributes) become a `/** ... */` comment on its prototype or declaration in the header and on a function definition. `*/` inside the text is written `* /`. `false` omits them. |
 | `features.body_comments` | bool | Default true. The `//` lines directly above a statement are written as `/* */` lines after its `#line` marker, once each (docs/kif-c-backends.md, "Source comments"). |
 | `features.fold_notes` | bool | Default true. A `/* kif: kept, why */` comment after each temporary the emitter did not fold into an expression (docs/kif-ir-codegen.md, "Expression folding"). `false` leaves the C without them. |
 | `features.<name>` | bool, integer or string | A **custom flag**: lower-case name of your choice. Read by `includes.when`, and by backends and `cfg(feature = "<name>")` once those exist. |

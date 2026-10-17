@@ -155,7 +155,7 @@ class _Flow:
             for a in c.args[1:]:
                 self.sink(a, c.site, "KIFT008", "is passed through an indirect call (a function value), whose target body cannot be checked", report)
             self.define(c, self.any(c.uses()))
-        elif c.taint == "untaint" or c.callee == "ct::clamp":
+        elif c.taint in ("untaint", "clean") or c.callee == "ct::clamp":
             self.define(c, None)
         elif c.taint == "tainted_result":
             self.define(c, Origin(f"result of {c.callee}()", c.site.range.start.line + 1 if c.site is not None and getattr(c.site, "range", None) else 0))

@@ -239,8 +239,9 @@ Implementation notes (stage 1):
   using the policy recorded in `security.taint` (so the effective set under `exports: "all"` is verified too). `barriers`, `kept_checks`, `proved`
   and `ir_hash` describe bodies the importer never sees: they are bound by `security_digest` (and the signature), not by the text.
 * `kept_checks` counts operation checks and call requirements that remain after the default pipeline, plus a call whose callee's own guard
-  covers it; an entry assumption (the callee's `requires`) is the caller's to prove and is not counted. Methods are not built to IR yet, so
-  they record `"unknown"` and `ir_hash: null`.
+  covers it; an entry assumption (the callee's `requires`) is the caller's to prove and is not counted. Methods of `impl` blocks are built to IR like
+  functions and keyed `Type::name` or `<Type as Iface>::name` (by declaration, so equal names on different types stay apart). Only what the IR
+  builder skips (an unsupported construct, an interface default method, a generic or embedded function) records `"unknown"` and `ir_hash: null`.
 * Stage 2: `modsec.annotate` runs when a module is loaded and sets `Param.effective_taint` on every parameter that takes tainted data. For a
   `.kifm` that is the vendor's recorded `tainted_params`; for source it is the attributes plus the module's own `taint.exports`. The taint
   checker's call rules (`accepts`, `written_by`) read it next to `#[tainted]`, so a call checks identically against source and a `.kifm`

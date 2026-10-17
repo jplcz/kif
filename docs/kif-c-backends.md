@@ -532,5 +532,5 @@ above that line are written after it as `/* ... */` lines, once each:
 
 Rationale: the header is the API a C caller reads, so the documentation travels with it; a body comment explains the statement it sits
 above, and the marker is already where the generated code is tied to that source line (it also survives folding and structuring,
-which only move code, not the comment lines). A blank line detaches a comment. Not carried over: trailing comments (`x = 1; // why`)
-and comments on types. Turn them off with `features.doc_comments: false` (function docs) and `features.body_comments: false` (bodies).
+which only move code, not the comment lines). A blank line detaches a comment. Not carried over: trailing comments (`x = 1; // why`). Doc comments of structs, fields, enums, enumerators and constants are carried like function docs.
+Turn them off with `features.doc_comments: false` (all declaration docs) and `features.body_comments: false` (bodies).

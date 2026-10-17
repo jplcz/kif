@@ -417,7 +417,7 @@ class Lowerer:
         r = getattr(node, "range", None)
         return r.start.line + 1 if r is not None else 0
 
-    def doc_comment(self, node) -> str:
+    def doc_comment(self, node, indent: str = "") -> str:
         """The `//` comment lines directly above a declaration, as a C block comment (empty when there are none or `features.doc_comments` is false)."""
         src = getattr(self.mod, "source", "") if self.mod else ""
         if not src or not self.t.flag("doc_comments", True):
@@ -425,8 +425,8 @@ class Lowerer:
         text = astutil.doc_above(src.split("\n"), node)
         if not text:
             return ""
-        body = "\n".join((" * " + ln).rstrip() for ln in text.replace("*/", "* /").split("\n"))
-        return f"/**\n{body}\n */\n"
+        body = "\n".join((f"{indent} * " + ln).rstrip() for ln in text.replace("*/", "* /").split("\n"))
+        return f"{indent}/**\n{body}\n{indent} */\n"
 
     def doc_lines(self, node) -> Set[int]:
         """Indexes of the source lines of the doc comment above `node`, which a one-line body must not repeat."""
@@ -1087,8 +1087,8 @@ static __inline void kif_opt_{tag}_reset({O} *o)
                 nxt = v
             rows.append((self.enumerator(d, m.name.text), nxt))
             nxt += 1
-        body = ",\n".join(f"\t{n} = {v}" for n, v in rows)
-        out = [f"enum {d.name.text} {{\n{body}\n}};"]
+        body = ",\n".join(f"{self.doc_comment(m, chr(9))}\t{n} = {v}" for m, (n, v) in zip(d.members, rows))
+        out = [f"{self.doc_comment(d)}enum {d.name.text} {{\n{body}\n}};"]
         if has_attr(d.attrs, "typedef"):
             out.append(f"typedef enum {d.name.text} {d.name.text};")
         return out
@@ -1111,8 +1111,8 @@ static __inline void kif_opt_{tag}_reset({O} *o)
         al = find_attr(d.attrs, "align")
         if al is not None and al.args and al.args[0].value is not None:
             attrs += " " + (self.t.annotation("align") or "__attribute__((aligned({n})))").replace("{n}", str(al.args[0].value.value))
-        fields = "".join(f"\t{self.decl(f.ty, f.name.text)};\n" for f in d.fields)
-        out = [f"struct {d.name.text} {{\n{fields}}}{attrs};"]
+        fields = "".join(f"{self.doc_comment(f, chr(9))}\t{self.decl(f.ty, f.name.text)};\n" for f in d.fields)
+        out = [f"{self.doc_comment(d)}struct {d.name.text} {{\n{fields}}}{attrs};"]
         if has_attr(d.attrs, "typedef"):
             out.append(f"typedef struct {d.name.text} {d.name.text};")
         return out
@@ -1143,9 +1143,9 @@ static __inline void kif_opt_{tag}_reset({O} *o)
         if n == "bool":
             if not (isinstance(c.value, ast.Lit) and c.value.kind == "bool"):
                 raise self.err("a bool constant must be a literal here", c)
-            return [f"#define {self.const_name(c)} {'true' if c.value.value else 'false'}"]
+            return [f"{self.doc_comment(c)}#define {self.const_name(c)} {'true' if c.value.value else 'false'}"]
         v = self.const_value(c.value)
-        return [f"#define {self.const_name(c)} {self.literal(v, n)}"]
+        return [f"{self.doc_comment(c)}#define {self.const_name(c)} {self.literal(v, n)}"]
 
     def const_value(self, e) -> int:
         if isinstance(e, ast.Lit) and e.kind == "int":

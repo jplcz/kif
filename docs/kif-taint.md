@@ -59,7 +59,7 @@ Tainted data enters through exactly these, each an explicit attribute:
 |--------|----------|--------|
 | a parameter | `#[tainted] x: T` | every use of `x` in the body is tainted |
 | a type | `#[tainted] struct req { .. }` | every value of the type, anywhere, is tainted; a field read of one is tainted |
-| one field | `#[tainted] len: u32` inside a struct | reading that field is tainted; the rest of the struct is not |
+| one field | `#[tainted] len: u32` inside a struct | taints the **whole struct** (same as `#[tainted]` on the type): every field is a source |
 | a function result | `#[tainted_result] fn read_user(..) -> u32` | the call result is tainted (this is how a body-less `extern` brings data in) |
 | exported entry points | policy, see below | parameters of `#[export]` functions |
 
@@ -83,14 +83,14 @@ is `"declared"`; a kernel target sets `"all"`. This only chooses *what is a sour
 ### Rule 2 - Taint is poison and propagates through every computation
 
 The result of an operation is tainted when any operand is: arithmetic, comparison, logical operators, casts, field and element
-access of a tainted aggregate, struct/array/tuple construction (the aggregate is tainted when any part is, *per field* when the
-fields are known), `Project` out of a tainted pattern match, and the result of a call (rule 7).
+access of a tainted aggregate, struct/array/tuple construction (the aggregate is tainted when any part is), `Project` out of a tainted pattern match, and the result of a call (rule 7).
 
 *Why poison and not "taint only the bytes that matter".* Precision lets a tainted value be laundered by a refactor ("this
 comparison only used the top bit"). A single conservative rule can be explained in one sentence and checked in one pass.
 
-*Aggregates.* A struct local has one taint per field (a field-sensitive map). Whole-value uses (a copy, a call argument) are tainted
-when any field is. Element taint of an array or vector is one flag for all elements (the same "any index" simplification the
+*Aggregates.* A struct is tainted **all or nothing**: if the type or any of its fields is `#[tainted]`, every field of every value
+of that struct is tainted (no exceptions, no per-field precision), so a refactor cannot move data into a "clean" field. A struct with
+no tainted field is clean and refuses tainted data (`KIFT004`). Element taint of an array or vector is one flag for all elements (the same "any index" simplification the
 borrow check makes). An array of tainted data is fine as long as the **index** is clean; reading a tainted element through a clean
 index yields a tainted value that passes through a speculation barrier (rule 5a).
 
@@ -100,7 +100,7 @@ A **local** slot's taint is inferred, flow-sensitively: storing a tainted value 
 the *whole* slot makes it clean again (a strong update), writing one field or element only ever adds taint (a weak update). At a
 join the taint is the union.
 
-A place with a **declared** taint is never inferred: a struct field without `#[tainted]`, a parameter without it, a `&mut` referent,
+A place with a **declared** taint is never inferred: a field of a struct with no tainted field, a parameter without it, a `&mut` referent,
 a `static`, a vector element behind a reference. Writing a tainted value into one is an error (`KIFT004`).
 
 *Why.* A local is private; everyone who reads it sees the analysis result. A field or a `&mut` referent is shared: another
@@ -177,8 +177,17 @@ silently invalidate that. Declaring the parameter `#[tainted]` re-checks the cal
 for tainted input. A function with no `#[tainted]` parameter at all can never receive tainted data.
 
 **Results.** The result of a call is tainted when any argument of the call is tainted, *or* the callee is `#[tainted_result]`,
-unless the callee is `#[untaint]` (rule 9). The "any argument" part is conservative (a callee summary computed from its body, which
-says which parameters can reach the result, is a later refinement; the `Call.flows` operand numbering already exists for it).
+unless the callee is `#[untaint]` (rule 9). The "any argument" part is conservative, with one summary: when the callee has a body, returns a
+plain integer or `bool`, and is not `#[tainted_result]`, its own body check (KIFT005) already proved that no tainted parameter reaches the
+result, and tainted arguments can only enter `#[tainted]` parameters (KIFT003), so the call's result is **clean**. Callees without a body
+(`extern`, C, a `.kifm` whose bodies are not shipped, interfaces), results that are structs, slices or references, and calls that
+KIFT003 already refuses keep the conservative rule. A per-parameter summary (which parameters reach the result) is a later refinement;
+the `Call.flows` operand numbering already exists for it.
+
+```
+fn pick(#[tainted] a: u32, b: u32) -> u32 { b }     // checked with `a` tainted; returns only clean data
+let y = pick(raw(), 1);                              // `raw()` is #[tainted_result]: y is clean, so t[y] is fine
+```
 A tainted result returned from a function that is neither `#[tainted_result]` nor `#[untaint]` is `KIFT005`.
 
 **Bodies without a body (`extern`, C, C++, `#[ops]` interfaces).** A declaration is the contract: a parameter not marked `#[tainted]`
@@ -283,7 +292,7 @@ not a search (section 5). The lint (`kif lint`) prints the same list for a use t
 #[tainted]
 struct request { op: u32, off: usize, len: usize }
 
-// One field tainted, the rest trusted.
+// One tainted field taints the whole struct: magic and payload are both sources.
 struct frame { magic: u32, #[tainted] payload: u64 }
 
 // A parameter source.
@@ -344,7 +353,7 @@ Attribute summary (all validated by `facts.py`-style checks; a misplaced one is 
 | `KIFT001` | call an `#[untaint]` function that maps the value to a clean code first; compute with `ct::select` instead of branching |
 | `KIFT002` | clamp the index with an `#[untaint]` function (the `array_index_nospec` idiom); use `ct::select` to pick the element; mask the index to a constant size |
 | `KIFT003` | mark the callee's parameter `#[tainted]` (and make its body pass); sanitise the value before the call |
-| `KIFT004` | declare the destination field or referent `#[tainted]`; keep the value in a local |
+| `KIFT004` | declare the destination struct (or field, which taints the struct) or referent `#[tainted]`; keep the value in a local |
 | `KIFT005` | mark the function `#[tainted_result]`; sanitise before returning |
 | `KIFT008` | call a concrete function instead of the indirect one; sanitise first |
 | `KIFT010` | write `untaint!("why this is safe here", f(x))`; state what the sanitizer guarantees at this site |
@@ -505,7 +514,7 @@ A target that supplies neither lowering makes any use of a barrier an error at l
 
 **Aggregates get one barrier per field.** `spec::value(agg)` on a struct, tuple or array value is lowered to one value barrier per
 scalar field (recursively), because a barrier only constrains a register value. An implicit barrier on a tainted aggregate load
-does the same. Fields that are not tainted are left alone. Enums barrier the tag and each payload field of the active variant.
+does the same. Fields of a clean struct are left alone. Enums barrier the tag and each payload field of the active variant.
 
 **Audit comments.** Every barrier the code generator emits, explicit or implicit, is preceded by a comment so auditors and
 certification reviewers can find each one without reading the IR:
@@ -580,9 +589,9 @@ path is a place a reviewer sees, and the set is small.
 
 ## 11. Stages
 
-1. **Attributes and checker plumbing.** Parse and validate the attributes (`KIFT007`), `Ty.tainted`, field-sensitive local taint in
+1. **Attributes and checker plumbing.** Parse and validate the attributes (`KIFT007`), `Ty.tainted`, local taint in
    `bodies.py`; sinks `KIFT001` / `KIFT002` for locals and parameters only. Tests: one per sink, one per propagation rule.
-2. **Calls and places.** Rule 7 (`KIFT003`, `KIFT005`, `KIFT008`) and rule 3 (`KIFT004`), `#[tainted_result]`, struct/field taint. **Done.** Limits: a local carries one taint (no per-field), prelude/builtin methods are not annotated (a tainted receiver or argument gives `KIFT003`), and lambdas are not walked.
+2. **Calls and places.** Rule 7 (`KIFT003`, `KIFT005`, `KIFT008`) and rule 3 (`KIFT004`), `#[tainted_result]`, struct/field taint. **Done.** Structs are all-or-nothing; a local carries one taint, prelude/builtin methods are not annotated (a tainted receiver or argument gives `KIFT003`), and lambdas are not walked.
 3. **Sanitizers.** `#[untaint]` with checked, pure bodies (`KIFT009`), `#[untaint(trusted)]`, the `ct` intrinsics. **Done:** `KIFT009` is checked (`&mut` parameter, store through a reference or to a static/parameter, `unsafe`, lambdas, any macro but `untaint!`, any call that is not `#[untaint]` or in the `ct::`/`spec::` namespaces) and `#[untaint(trusted)]` bodies are skipped.  The `ct::` intrinsics are typed, tainted-checked, lowered to the IR and interpreted; their C emission is stage 5.
 4. **IR backstop.** Done: the `taint` pass (`kiflang/taint_ir.py`) runs by default and in `check_module`, so `kif lint` and the editor show it.
    `Local.taint` (a `#[tainted]` parameter) and `Call.taint` (`untaint` / `tainted_result`) are new IR fields, serialized, `IR_VERSION` is 2.

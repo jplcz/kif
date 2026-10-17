@@ -305,3 +305,15 @@ def test_ir_taint_report_summarises_the_audit_surface(tmp_path):
     assert "untaint! sites: 1" in out and "s(): masked to 0..3 [g]" in out
     assert "Speculation barriers: 3 (1 explicit, 2 implicit)" in out
     assert "Tainted sources: 3" in out   # s(x), g(t), the result of get()
+
+
+def test_doc_comments_reach_struct_enum_const_and_members(tmp_path):
+    """`//` lines above a struct, enum, const, field or enumerator become `/** */` blocks in the generated C header."""
+    from kiflang import kifc
+
+    (tmp_path / "d.kif").write_text("// A device.\nstruct dev {\n    // the id\n    id: u32,\n    n: u32,\n}\n\n// Colours.\nenum col {\n    // red one\n    red = 1,\n    blue,\n}\n\n// Max things.\nconst MAX: u32 = 4;\n")
+    assert kifc.main(["--c", str(tmp_path / "o"), "--no-project", str(tmp_path / "d.kif")]) == 0
+    h = (tmp_path / "o" / "d_proc.h").read_text()
+    for text in ("A device.", "the id", "Colours.", "red one", "Max things."):
+        assert f" * {text}\n" in h
+    assert h.index("A device.") < h.index("struct dev") and h.index("the id") < h.index("uint32_t id")
