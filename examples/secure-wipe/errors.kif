@@ -1,0 +1,24 @@
+// Every secure-wipe declaration error, one per construct. `./show.sh errors.kif` prints the diagnostics.
+
+#[secure_wipe]
+struct has_drop { x: u32 }
+impl has_drop { fn drop(&mut self) { } }                 // KIFW002: a secure struct cannot have a drop
+
+#[secure_wipe]
+struct leaky { p: ptr<u8>, x: u32 }                      // KIFW003: p is not wipeable and not #[wipe_exempt]
+
+struct plain_struct { #[wipe_exempt] x: u32 }            // KIFW004: the struct is not #[secure_wipe]
+
+#[secure_wipe]
+enum e { a }                                             // KIFW004: only let, fn and struct
+
+#[tls]
+#[secure_wipe]
+static SHARED: u32 = 0;                                  // KIFW005: shared storage
+
+fn bad(p: ptr<u8>, #[secure_wipe] q: ptr<u8>) {          // KIFW001: a parameter that owns or borrows
+    #[secure_wipe]
+    let a: ptr<u8> = p;                                  // KIFW001
+    #[wipe_exempt]
+    let b: u32 = 1;                                      // KIFW004: the function is not #[secure_wipe]
+}

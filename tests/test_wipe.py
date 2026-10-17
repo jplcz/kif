@@ -76,3 +76,21 @@ def test_target_wipe_barrier_rules():
     plan = t.wipe()
     assert plan.error is None and plan.macro == "ZERO" and plan.body.endswith("__asm__ volatile (\"\" : : \"r\"((p)) : \"memory\")")
     assert target.validate({"wipe": {"call": "f({x})"}}) != []
+
+
+def test_wipe_instruction_text_hash_and_serialization():
+    from kiflang import ir, irhash, serial
+
+    loc = ir.Local(0, "k", "[u8; 32]", wipe=True)
+    w = ir.Wipe(loc, ".bytes", "[u8; 32]", why="end of live range")
+    assert ir._instr(w) == "wipe %k.bytes  // end of live range"
+    assert irhash.HASHED["Wipe"] == ("local", "path", "ty", "volatile") and irhash.classified("Wipe")
+    assert "wipe" in irhash.HASHED["Local"]
+    assert ir.Wipe in set(serial._INSTRS.values())
+
+
+def test_secure_struct_drop_is_found_wherever_it_is_declared():
+    assert codes("impl g { fn drop(&mut self) { } }\n#[secure_wipe] struct g { x: u32 }") == ["KIFW002"]
+    assert codes("#[secure_wipe] struct g { x: u32 }\nimpl g { fn a(&self) { } }\nimpl g { fn drop(&mut self) { } }") == ["KIFW002"]
+    assert codes("#[secure_wipe] struct g<T> { x: u32 }\nimpl<T> g<T> { fn drop(&mut self) { } }") == ["KIFW002"]
+    assert codes("#[secure_wipe] struct g { x: u32 }\nimpl g { fn new() -> g { g { x: 0 } } fn drop(&mut self) { } }") == ["KIFW002"]

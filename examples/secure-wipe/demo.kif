@@ -1,0 +1,52 @@
+// Secure wipe demo (docs/kif-secure-wipe.md). Run ./show.sh to see diagnostics, IR and generated C for the current build.
+// Each feature appears in the output once its stage is implemented; README.md lists which stage shows what.
+
+// A heap object the session points at but does not own the secrets of.
+struct node { v: u8 }
+impl node { fn get(&self) -> u8 { self.v } }
+
+// A struct whose generated drop wipes the plain fields; the pointer is owned elsewhere, so it is exempt (rule W4-W6).
+#[secure_wipe]
+struct session_key {
+    bytes: [u8; 32],
+    counter: u64,
+    #[wipe_exempt]
+    owner: ptr<node>,
+}
+
+// One variable: wiped right after its last use, not at the end of the scope (rule W1).
+#[export]
+fn checksum(data: &[u8]) -> u32 {
+    #[secure_wipe]
+    let mut acc: u32 = 0;
+    let mut i: usize = 0;
+    while i < data.len() {
+        acc = acc + (data[i] as u32);
+        i = i + 1;
+    }
+    let out: u32 = acc;
+    out
+}
+
+// The function-level attribute marks every plain local (rule W8); #[wipe_exempt] opts one variable out.
+#[export]
+#[secure_wipe]
+fn derive(seed: u64) -> u64 {
+    let a: u64 = seed * 3;
+    let b: u64 = a + 7;
+    #[wipe_exempt]
+    let public_note: u64 = 42;
+    b + public_note
+}
+
+// A by-value parameter must be marked on its own: the function-level attribute covers locals only (limitation, rule W8).
+#[export]
+fn mix(#[secure_wipe] secret: u64, salt: u64) -> u64 { secret ^ salt }
+
+// Volatile is an explicit extra layer (rule W2).
+#[export]
+fn scratch() -> u8 {
+    #[secure_wipe(volatile)]
+    let buf: [u8; 16] = [0; 16];
+    buf[0]
+}

@@ -379,7 +379,7 @@ GCC-style asm; a target whose compiler lacks even that must set `wipe.call` expl
 | Item | Representation |
 |------|----------------|
 | secure variable | `Local.wipe: bool` (set by the builder for a marked `let`, a secure-struct type, or a `#[secure_wipe]` function) |
-| the wipe | a new instruction `Wipe(local, field_path, size, why)` (an impure, ordered operation like `Barrier`): `field_path` is empty for a whole trivial variable and `.field` for a field of a secure struct; `why` is the audit text for the comment |
+| the wipe | a new instruction `Wipe(local, path, ty, volatile, why)` (an impure, ordered operation like `Barrier`): `path` is empty for a whole trivial variable and `.field` for a field of a secure struct; `ty` is the wiped object's type (the code generator emits `sizeof` of it, so the IR has no target sizes); `volatile` selects `wipe.volatile_call`; `why` is the audit text for the comment |
 | generated drop | the synthesized `drop` is built as IR like a user `drop`, containing `Wipe` instructions per field |
 | IR text and hash | `Wipe` is printed (`wipe %scratch  // end of live range`) and **is part of the IR hash**: a function that gained or lost a wipe has a different meaning (docs/kif-module-contracts.md section 13 lists it with the taint attributes) |
 

@@ -25,7 +25,7 @@ SCHEMA = "kif-ir-hash/1"
 
 # class -> the fields that are part of the identity (operands, locals, temps and blocks are encoded by their renumbered id)
 HASHED: Dict[str, Tuple[str, ...]] = {
-    "Local": ("ty", "mut", "param", "length", "owns", "taint"),
+    "Local": ("ty", "mut", "param", "length", "owns", "taint", "wipe"),
     "Temp": ("ty", "owns"),
     "Const": ("value", "ty"),
     "Load": ("dst", "local"),
@@ -51,6 +51,7 @@ HASHED: Dict[str, Tuple[str, ...]] = {
     "PatTest": ("dst", "base", "pattern"),
     "Project": ("dst", "base", "path"),
     "Opaque": ("dst", "what", "args"),
+    "Wipe": ("local", "path", "ty", "volatile"),
     "Barrier": ("kind", "dst", "a"),
     "Jump": ("target",),
     "Branch": ("cond", "then", "otherwise"),
@@ -69,6 +70,7 @@ EXCLUDED: Dict[str, Dict[str, str]] = {
     "Call": {"reason": "the text of an `untaint!` reason is prose", "unguarded": "set by the `elide` pass, not in raw IR"},
     "Check": {"proof": "set by the provers, and prose", "refuted": "set by the provers, and prose"},
     "Barrier": {"why": "prose"},
+    "Wipe": {"why": "the audit comment is prose"},
     "Block": {"id": "renumbered", "label": "names are not meaning"},
     "Function": {"name": "the hash identifies the body", "node": "the syntax tree: positions and comments", "elided_at": "set by the `elide` pass", "elided": "set by the `elide` pass"},
 }

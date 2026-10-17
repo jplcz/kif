@@ -59,6 +59,7 @@ class Local:
     length: Optional[int] = None  # the element count when the type is an array with a constant length
     owns: bool = False  # the slot holds a value with drop glue (a vector, a string, a struct with a `drop` or an owning field): see Dead.drop
     taint: bool = False  # a `#[tainted]` parameter: the slot starts out holding untrusted data (docs/kif-taint.md); read by the `taint` pass
+    wipe: bool = False  # a secure variable (`#[secure_wipe]`, or a plain local of a `#[secure_wipe]` function): the `wipes` pass wipes it (docs/kif-secure-wipe.md)
 
     @cached_property
     def type(self) -> Type:
@@ -404,6 +405,20 @@ class Barrier(Instr):
 
 
 @dataclass(eq=False)
+class Wipe(Instr):
+    """A secure wipe of the storage of `local` (or of its field `path`, `.name` segments) right here (docs/kif-secure-wipe.md rule W1, W5).
+    `ty` is the type of the wiped object, from which the code generator takes `sizeof`. `volatile` asks for the target's volatile wipe.
+    The object is dead afterwards: nothing may read it. The IR carries only the decision; the primitive and barrier come from the
+    target at emission. Part of the IR hash, and like `Barrier` never removed, duplicated or moved by a pass. `why` is the audit text
+    for the generated comment (prose: not hashed)."""
+    local: Local
+    path: str = ""
+    ty: str = ""
+    volatile: bool = False
+    why: str = ""
+
+
+@dataclass(eq=False)
 class Opaque(Instr):
     """A value the IR does not model: a macro, a closure, a `cfg` condition.
     `what` names it (what is left: closures, macros, `cfg` conditions, the borrow of a place that is not a local); `args` are the values it was computed from. It has no effect on any slot (a mutation inside it shows up as
@@ -677,6 +692,8 @@ def _instr(i: Instr) -> str:
         return f"{d}project {i.base}{('.' + i.path.lstrip('.')) if i.path else ''}"
     if isinstance(i, Barrier):
         return f"{d}barrier {i.kind}" + (f" {i.a}" if i.a is not None else "") + (f"  // implicit: {i.why}" if i.why else "")
+    if isinstance(i, Wipe):
+        return f"wipe {i.local}{i.path}" + (" volatile" if i.volatile else "") + (f"  // {i.why}" if i.why else "")
     if isinstance(i, Opaque):
         return f"{d}opaque {i.what}" + (f"({', '.join(str(a) for a in i.args)})" if i.args else "")
     return repr(i)
