@@ -320,6 +320,22 @@ CFG. The `default` pipeline is every registered pass (`--passes default,-name` l
 function the builder skips is reported in `ModuleResult.skipped`. Code generation runs the whole pipeline first (the target's `ir.passes`,
 default every pass) and is just the final consumer of what the passes left behind. To add a pass, see [kif-ir-passes.md](kif-ir-passes.md).
 
+## IR hash
+
+`kif ir FILE --hash` prints one line per function, `sha256:<hex>  <name>  <file>:<line>`: a meaning-based identity of the function's **raw**
+IR (before any pass). Comments, doc comments, names, positions and the prose of `untaint!` reasons are not part of it, so
+`fn f(x: u32) -> u32 { 2 * x }` hashes the same under any name, in any file. Diffing the output of two releases lists the functions that
+meaningfully changed.
+
+```
+$ kif ir driver.kif --hash
+sha256:f446ce79...e3b1  f  driver.kif:1
+sha256:f446ce79...e3b1  g  driver.kif:4     # same body as f (other name, comments, spacing): same hash
+```
+
+Which IR fields are hashed and which are not is a table in `kiflang/irhash.py` (`HASHED`, `EXCLUDED`); a field added to the IR fails
+`tests/test_irhash.py` until it is classified. The design, with the planned signed attestation, is `docs/kif-module-contracts.md` section 13.
+
 ## 5. Planned
 
 `preserves` to keep facts across a `&mut` call; an interval domain (masks, overflow and division checks); `--explain-checks` on

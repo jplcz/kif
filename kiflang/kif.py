@@ -134,7 +134,7 @@ def cmd_ir(args: argparse.Namespace) -> int:
         print("kif ir: give a FILE (or --list-passes)", file=sys.stderr)
         return 2
     try:
-        names = passmgr.pipeline(args.passes) if args.passes else passmgr.pipeline("default") if args.explain_taint or args.taint_report else (["prove"] if args.prove else [])
+        names = passmgr.pipeline(args.passes) if args.passes else [] if args.hash else passmgr.pipeline("default") if args.explain_taint or args.taint_report else (["prove"] if args.prove else [])
         passmgr.order(names)
     except passmgr.PassError as e:
         print(f"kif ir: {e}", file=sys.stderr)
@@ -174,7 +174,12 @@ def cmd_ir(args: argparse.Namespace) -> int:
                 print(f"kif ir: pass {n}: {sec * 1000:.1f} ms over {len(ran.functions)} functions", file=sys.stderr)
         if any(d.severity == ERROR for d in found):
             return 1
-        if args.taint_report:
+        if args.hash:
+            from . import irhash
+
+            out = "".join(f"{h}  {f.name}  {args.file}:{f.node.range.start.line + 1 if f.node is not None else 0}\n"
+                          for f in built.functions for h in [irhash.ir_hash(f)])
+        elif args.taint_report:
             from . import taint_ir
 
             out = taint_ir.report(built, args.file)
@@ -481,6 +486,7 @@ def make_parser() -> "tuple":
     ir_.add_argument("--list-passes", action="store_true", help="list the IR passes and exit")
     ir_.add_argument("--explain-checks", action="store_true", help="list every run-time check of the file as proved (with the proof) or kept (docs/kif-ir-passes.md)")
     ir_.add_argument("--taint-report", action="store_true", help="the taint audit for a security review: sanitizers and their call sites, #[trusted] functions, every untaint! reason, every barrier and tainted source (docs/kif-taint.md)")
+    ir_.add_argument("--hash", action="store_true", help="one line per function: the sha256 of its raw IR, which ignores comments, names and positions (docs/kif-module-contracts.md, section 13)")
     ir_.add_argument("--explain-taint", action="store_true", help="list the taint sources, every speculation barrier (written or inserted, with its reason) and every untaint! reason (docs/kif-taint.md)")
     ir_.add_argument("--coverage", action="store_true", help="report which functions the IR describes completely enough to emit code from (docs/kif-ir-codegen.md)")
     ir_.add_argument("--stats", action="store_true", help="print the time each pass took")
