@@ -62,7 +62,7 @@ class CRefusalsPass(Pass):
             elif isinstance(i, ir.Project) and i.path.startswith("Some") and owned(i.base):
                 ctx.report("KIFC106", "this optional owns resources: test it with `Some(_)` and read it with value(), a binding would copy the owner", i.site or defs[i.base.id].site)
                 n += 1
-            elif isinstance(i, ir.Test) and i.kind == "has_next" and i.base.type.kind == irtypes.NAMED and i.base.type.name in ("vector", "str"):
+            elif isinstance(i, ir.Test) and i.kind == "has_next" and i.base.type.kind == irtypes.NAMED and i.base.type.name in ("vector", "secure_vector", "str"):
                 ctx.report("KIFC108", "`for` over a vector would move it: iterate a borrow, `for x in &v` or `&mut v`", i.site or defs[i.base.id].site)
                 n += 1
             elif isinstance(i, ir.PatTest) and i.pattern.startswith("ok(") and owned(i.base):

@@ -181,7 +181,7 @@ class _Emit:
             return ("" if t.mut else "const ") + self.ctype(t.args[0]) + " *"
         v = self.vec_elem(t)
         if v is not None:
-            return "struct kif_vec_" + self.lw.vec_tag(Ty(v))
+            return f"struct {self.vec_pre(t)}_" + self.lw.vec_tag(Ty(v), None, t.name == "secure_vector")
         if t.kind == irtypes.REF and self.vec_elem(t.args[0]) is not None:
             return ("" if t.mut else "const ") + self.ctype(t.args[0]) + " *"
         elem = self.span_elem(t)
@@ -341,9 +341,14 @@ class _Emit:
             return t.name
         return None
 
+    @staticmethod
+    def vec_pre(t: irtypes.Type) -> str:
+        """`kif_svec` for a `secure_vector<T>`, `kif_vec` for a `vector<T>`: the prefix of the C struct and its helpers."""
+        return "kif_svec" if t.name == "secure_vector" else "kif_vec"
+
     def vec_elem(self, t: irtypes.Type) -> Optional[str]:
         """The scalar element name of a `vector<T>` (the C struct `kif_vec_T`: `ptr`, `len`, `cap`), else None."""
-        if t.kind == irtypes.NAMED and t.name == "vector" and len(t.args) == 1:
+        if t.kind == irtypes.NAMED and t.name in ("vector", "secure_vector") and len(t.args) == 1:
             e = t.args[0]
             if e.is_scalar and (e.name in self.lw_bits() or e.name == "bool"):
                 return e.name
@@ -839,7 +844,7 @@ class _Emit:
             return f"kif_str_drop(&{expr});"
         if self.vec_elem(t):
             self.ctype(t)  # registers the element so the helpers are written
-            return f"kif_vec_{self.vec_elem(t)}_drop(&{expr});"
+            return f"{self.vec_pre(t)}_{self.vec_elem(t)}_drop(&{expr});"
         if self.opt_owns(t):
             self.ctype(t)
             return f"kif_opt_{self.opt_elem(t)}_drop(&{expr});"
@@ -915,9 +920,9 @@ class _Emit:
             return "struct"
         if isinstance(t, ast.PathType) and t.segments[0].name == "optional":
             return "struct"
-        if isinstance(t, ast.PathType) and t.segments[0].name in ("vector", "str", "str_view"):
+        if isinstance(t, ast.PathType) and t.segments[0].name in ("vector", "secure_vector", "str", "str_view"):
             return "struct"
-        if isinstance(t, ast.RefType) and isinstance(t.inner, ast.PathType) and t.inner.segments[0].name in ("vector", "str", "str_view"):
+        if isinstance(t, ast.RefType) and isinstance(t.inner, ast.PathType) and t.inner.segments[0].name in ("vector", "secure_vector", "str", "str_view"):
             return "struct"
         if isinstance(t, ast.RefType) and isinstance(t.inner, ast.PathType) and t.inner.dyn:
             return "struct"
@@ -1193,12 +1198,12 @@ class _Emit:
 
     def vec_call(self, c: ir.Call) -> bool:
         """`vector::try_create(n)` and the methods of a `vector<T>` of scalars: calls of the `kif_vec_T_*` helpers. False for any other call."""
-        if c.callee == "vector::try_create" and c.recv is None:
+        if c.callee in ("vector::try_create", "secure_vector::try_create") and c.recv is None:
             if c.dst is None or not self.vec_elem(self.res_inner(c.dst.type)):
                 raise _Bail("vector element type")
             e = self.vec_elem(self.res_inner(c.dst.type))
             self.ctype(self.res_inner(c.dst.type))
-            self.put(f"kif_t{c.dst.id} = kif_vec_{e}_try_create(&{self.rv(f'kif_t{c.dst.id}')}, {self.val(c.args[0], 'usize')});")
+            self.put(f"kif_t{c.dst.id} = {self.vec_pre(self.res_inner(c.dst.type))}_{e}_try_create(&{self.rv(f'kif_t{c.dst.id}')}, {self.val(c.args[0], 'usize')});")
             return True
         if c.recv is None or c.kind != "method" or c.decl:
             return False
@@ -1207,7 +1212,7 @@ class _Emit:
         if e is None:
             return False
         self.ctype(rt)
-        name, fn = c.callee, f"kif_vec_{e}_{c.callee}"
+        name, fn = c.callee, f"{self.vec_pre(rt)}_{e}_{c.callee}"
         r = self.val(c.recv) if c.recv.type.kind == irtypes.REF else f"&{self.val(c.recv)}"
         if name in self.VEC_SHAPE:
             if c.dst is None or self.res_elem(c.dst.type) is None:
@@ -1507,7 +1512,7 @@ class _Emit:
             if isinstance(i, ir.Call) and i.callee == "default_allocator" and not i.args and i.recv is None and i.dst is not None:
                 self.allocs.add(i.dst.id)
         for _, i in self.fn.instrs():
-            if isinstance(i, ir.Call) and i.callee in ("vector::try_allocate", "str::try_allocate") and i.recv is None and i.args \
+            if isinstance(i, ir.Call) and i.callee in ("vector::try_allocate", "secure_vector::try_allocate", "str::try_allocate") and i.recv is None and i.args \
                     and isinstance(i.args[0], ir.Temp) and i.args[0].id in self.allocs:
                 i.callee, i.args = i.callee.replace("try_allocate", "try_create"), i.args[1:]
         defs = {i.defs().id: i for _, i in self.fn.instrs() if i.defs() is not None}
@@ -1517,13 +1522,13 @@ class _Emit:
                 for step in re.findall(r"\.\w+", i.path):
                     lt = self.field_ir(lt, step[1:])
                 lt = lt.args[0] if lt.kind == irtypes.REF else lt
-                if lt.kind in (irtypes.SLICE, irtypes.ARRAY) or (lt.kind == irtypes.NAMED and lt.name == "vector" and len(lt.args) == 1):
+                if lt.kind in (irtypes.SLICE, irtypes.ARRAY) or (lt.kind == irtypes.NAMED and lt.name in ("vector", "secure_vector") and len(lt.args) == 1):
                     i.dst.ty = f"{'&mut ' if i.mut else '&'}[{lt.args[0]}]"
                     i.dst.__dict__.pop("type", None)
         for _, i in self.fn.instrs():  # `a[lo..hi]` of an array, slice or vector is the slice of its elements
             if isinstance(i, ir.Access) and i.kind == "range" and i.dst.ty in (None, "?", "&?", "&mut ?") or (isinstance(i, ir.Access) and i.kind == "range" and "?" in (i.dst.ty or "")):
                 bt = i.base.type.args[0] if i.base.type.kind == irtypes.REF else i.base.type
-                if bt.kind in (irtypes.SLICE, irtypes.ARRAY) or (bt.kind == irtypes.NAMED and bt.name == "vector" and len(bt.args) == 1):
+                if bt.kind in (irtypes.SLICE, irtypes.ARRAY) or (bt.kind == irtypes.NAMED and bt.name in ("vector", "secure_vector") and len(bt.args) == 1):
                     i.dst.ty = f"&[{bt.args[0]}]"
                     i.dst.__dict__.pop("type", None)
         for _, i in self.fn.instrs():  # `&mut *a` of an array reference is typed `&mut [T; _]`: the length is the referent's
@@ -1576,7 +1581,7 @@ class _Emit:
                 continue
             acc = defs.get(i.src.id)
             if isinstance(acc, ir.Access) and acc.kind == "ok" and isinstance(acc.base, ir.Temp) and isinstance(defs.get(acc.base.id), ir.Call) \
-                    and defs[acc.base.id].callee in ("vector::try_create", "ptr::try_allocate", "ptr::try_create") and "?" in (acc.base.ty or "?"):
+                    and defs[acc.base.id].callee in ("vector::try_create", "secure_vector::try_create", "ptr::try_allocate", "ptr::try_create") and "?" in (acc.base.ty or "?"):
                 for t, ty in ((i.src, str(dest)), (acc.base, f"result<{dest}>")):
                     t.ty = ty
                     t.__dict__.pop("type", None)

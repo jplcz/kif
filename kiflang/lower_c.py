@@ -170,6 +170,7 @@ class Lowerer:
         self.let_ty = None  # the annotation of the `let` being lowered (names the T of `vector::try_create`)
         self.opts: Dict[str, Tuple[str, Optional[str], bool]] = {}  # optional<T> tag -> (C element type, drop statement of `o->v` or None, T is a user struct)
         self.vecs: Dict[str, Tuple[str, bool]] = {}  # vector<T> element tag -> (C element type, T is a struct)
+        self.svecs: Dict[str, Tuple[str, bool]] = {}  # the same for secure_vector<T> (struct kif_svec_<tag>; docs/kif-secure-wipe.md rule W12)
         self.structs: Dict[str, ast.StructDecl] = {}
         self.enums: Dict[str, ast.EnumDecl] = {}
         self.fns: Dict[str, ast.FnDecl] = {}
@@ -246,6 +247,8 @@ class Lowerer:
             return f"struct {self.heap_struct(t.args[0].name, node)} *"
         if t.name == "vector" and len(t.args) == 1:
             return "struct kif_vec_" + self.vec_tag(t.args[0], node)
+        if t.name == "secure_vector" and len(t.args) == 1:
+            return "struct kif_svec_" + self.vec_tag(t.args[0], node, True)
         if t.name == "optional" and len(t.args) == 1:
             return "struct kif_opt_" + self.opt_tag(t.args[0], node)
         if t.name == "{integer}":
@@ -288,6 +291,8 @@ class Lowerer:
             return f"struct {self.heap_struct(t.segments[0].args[0].text, t)} *"
         if isinstance(t, ast.PathType) and len(t.segments) == 1 and t.segments[0].name == "vector" and len(t.segments[0].args) == 1:
             return "struct kif_vec_" + self.vec_tag(t.segments[0].args[0], t)
+        if isinstance(t, ast.PathType) and len(t.segments) == 1 and t.segments[0].name == "secure_vector" and len(t.segments[0].args) == 1:
+            return "struct kif_svec_" + self.vec_tag(t.segments[0].args[0], t, True)
         if isinstance(t, ast.PathType) and len(t.segments) == 1 and t.segments[0].name == "optional" and len(t.segments[0].args) == 1:
             return "struct kif_opt_" + self.opt_tag(t.segments[0].args[0], t)
         if isinstance(t, ast.PathType) and len(t.segments) == 1 and not t.segments[0].args:
@@ -1240,8 +1245,17 @@ static __inline void kif_opt_{tag}_reset({O} *o)
                   "try_clone": "", "try_create": "n", "try_at": "i"}
     VEC_PLAIN = ("len", "is_empty", "capacity", "clear", "drop")
 
-    def vec_tag(self, elem, node=None) -> str:
-        """The name part of `struct kif_vec_<tag>` for element type `elem` (a Ty or a source type); registers the element."""
+    def vec_tag(self, elem, node=None, secure: bool = False) -> str:
+        """The name part of `struct kif_vec_<tag>` for element type `elem` (a Ty or a source type); registers the element.
+        `secure` is for `secure_vector<T>`: `struct kif_svec_<tag>`, with its own wiping helpers."""
+        if secure:
+            plan = self.t.wipe()
+            if plan.error or self.t.get("alloc.malloc") is None or self.t.get("alloc.free") is None:
+                raise self.err("KIFW008: secure_vector needs a target with alloc.malloc, alloc.free and a working wipe" + (f" ({plan.error})" if plan.error else ""), node)
+            self.uses_wipe = True
+            tag = self.vec_tag(elem, node)
+            self.svecs.setdefault(tag, self.vecs[tag])
+            return tag
         name = elem.name if isinstance(elem, T.Ty) else (elem.text if isinstance(elem, ast.PathType) else None)
         if name in BITS or name in ("bool", "char"):
             self.vecs.setdefault(name, (self.scalar(name), False))
@@ -1270,22 +1284,24 @@ static __inline void kif_opt_{tag}_reset({O} *o)
             fwd = f"{ct};\n" if is_struct else ""
             s_structs.append(f"#ifndef KIF_HELPER_span_{tag}\n#define KIF_HELPER_span_{tag}\n{fwd}struct kif_span_{tag} {{ {ct} *ptr; size_t len; }};\n"
                              f"struct kif_cspan_{tag} {{ const {ct} *ptr; size_t len; }};\n#endif")
-        if not self.vecs:
+        if not self.vecs and not self.svecs:
             return s_structs, s_fns
-        realloc = self.t.get("alloc.realloc")
         free = self.t.get("alloc.free")
         nomem = self.errno_value("allocation_failed")
         empty = self.errno_value("container_empty")
         oor = self.errno_value("out_of_range")
         structs, fns = [], []
-        for tag, (ec, is_struct) in self.vecs.items():
-            V = f"struct kif_vec_{tag}"
-            P = f"kif_vec_{tag}"
+        rows = [(tag, ec, st, False) for tag, (ec, st) in self.vecs.items()] + [(tag, ec, st, True) for tag, (ec, st) in self.svecs.items()]
+        for tag, ec, is_struct, secure in rows:
+            pre = "svec" if secure else "vec"
+            V = f"struct kif_{pre}_{tag}"
+            P = f"kif_{pre}_{tag}"
             fwd = f"struct {tag};\n" if is_struct else ""
-            structs.append(f"#ifndef KIF_HELPER_vec_{tag}\n#define KIF_HELPER_vec_{tag}\n{fwd}{V} {{ {ec} *ptr; size_t len; size_t cap; }};\n#endif")
-            r = realloc.replace("{ptr}", "v->ptr").replace("{size}", "n * sizeof(" + ec + ")")
+            structs.append(f"#ifndef KIF_HELPER_{pre}_{tag}\n#define KIF_HELPER_{pre}_{tag}\n{fwd}{V} {{ {ec} *ptr; size_t len; size_t cap; }};\n#endif")
             f = free.replace("{ptr}", "v->ptr")
-            body = f"""static __inline int {P}_try_reserve({V} *v, size_t n)
+            m = self.t.get("alloc.malloc").replace("{size}", "n * sizeof(" + ec + ")")
+            r = (self.t.get("alloc.realloc") or "").replace("{ptr}", "v->ptr").replace("{size}", "n * sizeof(" + ec + ")")
+            plain_f_reserve = f"""static __inline int {P}_try_reserve({V} *v, size_t n)
 {{
 	{ec} *p;
 
@@ -1299,7 +1315,137 @@ static __inline void kif_opt_{tag}_reset({O} *o)
 	v->ptr = p;
 	v->cap = n;
 	return 0;
-}}
+}}"""
+            plain_f_pop = f"""static __inline int {P}_try_pop({V} *v)
+{{
+	if (v->len == 0)
+		return {empty};
+	v->len--;
+	return 0;
+}}"""
+            plain_f_resize = f"""static __inline int {P}_try_resize({V} *v, size_t n)
+{{
+	size_t i;
+	int rc = {P}_try_reserve(v, n);
+
+	if (rc != 0)
+		return rc;
+	for (i = v->len; i < n; i++) {{
+		{ec} zero = {{0}};
+
+		v->ptr[i] = zero;
+	}}
+	v->len = n;
+	return 0;
+}}"""
+            plain_f_erase = f"""static __inline int {P}_try_erase_at({V} *v, size_t i)
+{{
+	if (i >= v->len)
+		return {oor};
+	for (; i + 1 < v->len; i++)
+		v->ptr[i] = v->ptr[i + 1];
+	v->len--;
+	return 0;
+}}"""
+            plain_f_clear = f"""static __inline void {P}_clear({V} *v)
+{{
+	v->len = 0;
+}}"""
+            plain_f_drop = f"""static __inline void {P}_drop({V} *v)
+{{
+	{f};
+	v->ptr = NULL;
+	v->len = 0;
+	v->cap = 0;
+}}"""
+
+            wipe = lambda p, n: self.t.wipe().macro + f"({p}, {n})"
+            sec_f_reserve = f"""static __inline int {P}_try_reserve({V} *v, size_t n)
+{{
+	{ec} *p;
+	size_t i;
+
+	if (n <= v->cap)
+		return 0;
+	if (n > (size_t)-1 / sizeof({ec}))
+		return {nomem};
+	p = ({ec} *){m};
+	if (p == NULL)
+		return {nomem};
+	for (i = 0; i < v->len; i++)
+		p[i] = v->ptr[i];
+	if (v->ptr != NULL) {{
+		/* kif: secure wipe: the old block of a secure_vector, capacity bytes, before it is freed (never realloc) */
+		{wipe("v->ptr", "v->cap * sizeof(" + ec + ")")};
+		{f};
+	}}
+	v->ptr = p;
+	v->cap = n;
+	return 0;
+}}"""
+            sec_f_pop = f"""static __inline int {P}_try_pop({V} *v)
+{{
+	if (v->len == 0)
+		return {empty};
+	v->len--;
+	/* kif: secure wipe: the element a secure_vector pop vacated */
+	{wipe("&v->ptr[v->len]", "sizeof(" + ec + ")")};
+	return 0;
+}}"""
+            sec_f_resize = f"""static __inline int {P}_try_resize({V} *v, size_t n)
+{{
+	size_t i;
+	int rc = {P}_try_reserve(v, n);
+
+	if (rc != 0)
+		return rc;
+	if (n < v->len) {{
+		/* kif: secure wipe: the elements a secure_vector shrink vacated */
+		{wipe("&v->ptr[n]", "(v->len - n) * sizeof(" + ec + ")")};
+	}}
+	for (i = v->len; i < n; i++) {{
+		{ec} zero = {{0}};
+
+		v->ptr[i] = zero;
+	}}
+	v->len = n;
+	return 0;
+}}"""
+            sec_f_erase = f"""static __inline int {P}_try_erase_at({V} *v, size_t i)
+{{
+	if (i >= v->len)
+		return {oor};
+	for (; i + 1 < v->len; i++)
+		v->ptr[i] = v->ptr[i + 1];
+	v->len--;
+	/* kif: secure wipe: the slot a secure_vector erase vacated */
+	{wipe("&v->ptr[v->len]", "sizeof(" + ec + ")")};
+	return 0;
+}}"""
+            sec_f_clear = f"""static __inline void {P}_clear({V} *v)
+{{
+	if (v->len != 0) {{
+		/* kif: secure wipe: every element of a cleared secure_vector */
+		{wipe("v->ptr", "v->len * sizeof(" + ec + ")")};
+	}}
+	v->len = 0;
+}}"""
+            sec_f_drop = f"""static __inline void {P}_drop({V} *v)
+{{
+	if (v->ptr != NULL) {{
+		/* kif: secure wipe: the whole capacity of a dropped secure_vector, not just its length */
+		{wipe("v->ptr", "v->cap * sizeof(" + ec + ")")};
+		{f};
+	}}
+	v->ptr = NULL;
+	v->len = 0;
+	v->cap = 0;
+}}"""
+            if secure:
+                f_reserve, f_pop, f_resize, f_erase, f_clear, f_drop = sec_f_reserve, sec_f_pop, sec_f_resize, sec_f_erase, sec_f_clear, sec_f_drop
+            else:
+                f_reserve, f_pop, f_resize, f_erase, f_clear, f_drop = plain_f_reserve, plain_f_pop, plain_f_resize, plain_f_erase, plain_f_clear, plain_f_drop
+            body = f"""{f_reserve}
 
 static __inline int {P}_try_create({V} *out, size_t n)
 {{
@@ -1341,29 +1487,9 @@ static __inline int {P}_try_push({V} *v, {ec} value)
 	return 0;
 }}
 
-static __inline int {P}_try_pop({V} *v)
-{{
-	if (v->len == 0)
-		return {empty};
-	v->len--;
-	return 0;
-}}
+{f_pop}
 
-static __inline int {P}_try_resize({V} *v, size_t n)
-{{
-	size_t i;
-	int rc = {P}_try_reserve(v, n);
-
-	if (rc != 0)
-		return rc;
-	for (i = v->len; i < n; i++) {{
-		{ec} zero = {{0}};
-
-		v->ptr[i] = zero;
-	}}
-	v->len = n;
-	return 0;
-}}
+{f_resize}
 
 static __inline int {P}_try_insert_at({V} *v, size_t i, {ec} value)
 {{
@@ -1382,15 +1508,7 @@ static __inline int {P}_try_insert_at({V} *v, size_t i, {ec} value)
 	return 0;
 }}
 
-static __inline int {P}_try_erase_at({V} *v, size_t i)
-{{
-	if (i >= v->len)
-		return {oor};
-	for (; i + 1 < v->len; i++)
-		v->ptr[i] = v->ptr[i + 1];
-	v->len--;
-	return 0;
-}}
+{f_erase}
 
 static __inline int {P}_try_at(const {V} *v, size_t i, const {ec} **out)
 {{
@@ -1415,19 +1533,10 @@ static __inline size_t {P}_capacity(const {V} *v)
 	return v->cap;
 }}
 
-static __inline void {P}_clear({V} *v)
-{{
-	v->len = 0;
-}}
+{f_clear}
 
-static __inline void {P}_drop({V} *v)
-{{
-	{f};
-	v->ptr = NULL;
-	v->len = 0;
-	v->cap = 0;
-}}"""
-            fns.append(f"#ifndef KIF_HELPER_vec_{tag}_fns\n#define KIF_HELPER_vec_{tag}_fns\n{body}\n#endif")
+{f_drop}"""
+            fns.append(f"#ifndef KIF_HELPER_{pre}_{tag}_fns\n#define KIF_HELPER_{pre}_{tag}_fns\n{body}\n#endif")
         return s_structs + structs, s_fns + fns
 
     def prologue(self) -> List[str]:
@@ -1455,6 +1564,8 @@ static __inline void {P}_drop({V} *v)
             if any(a.name.text == "wipe_exempt" for a in f.attrs):
                 continue
             nm = f"self->{f.name.text}"
+            if not moved and isinstance(f.ty, ast.PathType) and f.ty.segments[-1].name == "secure_vector":
+                continue  # its own drop wipes the whole buffer and then frees it; clearing the header first would lose the pointer
             inner = self.structs.get(f.ty.text) if isinstance(f.ty, ast.PathType) else None
             if inner is not None and self.secure(inner):
                 out.append(f"	/* kif: secure wipe: {n}.{f.name.text} ({f.ty.text}), by its own generated drop ({self.file}:{f.name.range.start.line + 1}) */")
@@ -1502,6 +1613,8 @@ static __inline void {P}_drop({V} *v)
             if n == "str" and not args:
                 self.uses_str = self.uses_view = True
                 return f"kif_str_drop(&{c});"
+            if n == "secure_vector" and args and args[0] != T.UNKNOWN:
+                return f"kif_svec_{self.vec_tag(args[0], None, True)}_drop(&{c});"
             if n == "vector":
                 if not args or args[0] == T.UNKNOWN:
                     raise LowerError("a vector whose element type is not known cannot be dropped: give it a type annotation")
@@ -1521,6 +1634,8 @@ static __inline void {P}_drop({V} *v)
                 return f"kif_str_drop(&{c});"
             if sg.name == "vector" and len(sg.args) == 1:
                 return f"kif_vec_{self.vec_tag(sg.args[0], t)}_drop(&{c});"
+            if sg.name == "secure_vector" and len(sg.args) == 1:
+                return f"kif_svec_{self.vec_tag(sg.args[0], t, True)}_drop(&{c});"
             if sg.name == "ptr" and len(sg.args) == 1 and isinstance(sg.args[0], ast.PathType):
                 return f"{self.heap_struct(sg.args[0].text, t)}_delete({c});"
             if sg.name == "optional" and len(sg.args) == 1:
@@ -1537,7 +1652,7 @@ static __inline void {P}_drop({V} *v)
         sg = ty.segments[0]
         if sg.name == "optional" and len(sg.args) == 1:
             return self.drop_stmt("x", sg.args[0]) is not None
-        return (sg.name == "str" and not sg.args) or (sg.name in ("vector", "ptr") and len(sg.args) == 1) \
+        return (sg.name == "str" and not sg.args) or (sg.name in ("vector", "secure_vector", "ptr") and len(sg.args) == 1) \
             or (sg.name in self.dropable and not sg.args)
 
     @staticmethod

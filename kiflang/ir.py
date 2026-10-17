@@ -757,7 +757,7 @@ def verify(fn: Function) -> List[str]:
 
 # ------------------------------------------------------------------ building from the checked AST
 
-_SEQ = ("vector", "str", "str_view", "[]", "[;]")
+_SEQ = ("vector", "secure_vector", "str", "str_view", "[]", "[;]")
 _BIN_SHORT = ("&&", "||")
 
 
@@ -804,7 +804,7 @@ def owns_type(t: Type, drops) -> bool:
     if t.kind in ("array", "tuple"):
         return any(owns_type(a, drops) for a in t.args)
     if t.kind == "named":
-        return t.name in ("vector", "str", "ptr") or t.name in drops or t.name in _WRAPPERS and any(owns_type(a, drops) for a in t.args)
+        return t.name in ("vector", "secure_vector", "str", "ptr") or t.name in drops or t.name in _WRAPPERS and any(owns_type(a, drops) for a in t.args)
     return False
 
 
@@ -1179,7 +1179,7 @@ class _Builder:
         if not isinstance(target, ast.Index):
             return False
         bt = _strip(getattr(target.expr, "ty", None))
-        return bt is not None and bt.name in ("vector", "[]", "[;]")
+        return bt is not None and bt.name in ("vector", "secure_vector", "[]", "[;]")
 
     def place(self, e) -> Optional[Local]:
         """Evaluate the parts of a place that run code (indices and pointer derefs, with their checks); return its root local."""
@@ -1695,7 +1695,7 @@ class _Builder:
         t = it.type if isinstance(it, Temp) else None
         if t is None:
             return None
-        if t.kind == "ref" and (t.args[0].kind == "slice" or (t.args[0].name == "vector" and len(t.args[0].args) == 1)):
+        if t.kind == "ref" and (t.args[0].kind == "slice" or (t.args[0].name in ("vector", "secure_vector") and len(t.args[0].args) == 1)):
             return ("&mut " if t.mut else "&") + str(t.args[0].args[0])
         return None
 

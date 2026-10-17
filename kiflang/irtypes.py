@@ -82,13 +82,13 @@ class Type:
     @property
     def target(self) -> Optional["Type"]:
         """What a reference points at, what a slice, array or vector holds, what an optional or pointer wraps; None for other types."""
-        if self.kind in (REF, SLICE, ARRAY) or self.kind == NAMED and self.name in ("vector", "optional", "ptr", "slot") and self.args:
+        if self.kind in (REF, SLICE, ARRAY) or self.kind == NAMED and self.name in ("vector", "secure_vector", "optional", "ptr", "slot") and self.args:
             return self.args[0]
         return None
 
     @property
     def is_sequence(self) -> bool:
-        return self.kind in (SLICE, ARRAY) or self.kind == NAMED and self.name in ("vector", "str", "str_view")
+        return self.kind in (SLICE, ARRAY) or self.kind == NAMED and self.name in ("vector", "secure_vector", "str", "str_view")
 
     @property
     def is_unknown(self) -> bool:

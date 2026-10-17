@@ -332,6 +332,7 @@ class BodyChecker:
 
     def item(self, it, outer_generics: List[ast.GenericParam]) -> None:
         wipe.check_item_attrs(self, it)
+        wipe.check_secure_vectors(self, it)
         if isinstance(it, ast.StructDecl):
             wipe.check_struct(self, it)
         if isinstance(it, ast.FnDecl):
@@ -559,7 +560,7 @@ class BodyChecker:
                 return Ty("result", (self.ty(gargs[0], mod),) if gargs else (UNKNOWN,), key=f"{sym.module.key}:result", sym=sym)
             if sym.kind in ("struct", "enum") and not real:
                 return Ty(sym.node.name.text, key=f"{sym.module.key}:{sym.node.name.text}", cat="adt", sym=sym)
-            if name in ("c_ptr", "c_cptr", "vector", "ptr", "optional"):
+            if name in ("c_ptr", "c_cptr", "vector", "secure_vector", "ptr", "optional"):
                 pa = [x for x in t.segments[-1].args if not isinstance(x, (ast.Lifetime, ast.ConstArg))]
                 if pa:
                     return Ty(name, (self.ty(pa[0], mod),), key=f"{sym.module.key}:{name}", sym=sym)
@@ -1478,7 +1479,7 @@ class BodyChecker:
             for i, (a, g, p) in enumerate(zip(e.args, got, params)):
                 self.coerce(a, g, p, f"argument {i + 1} of {name!r}", "KIFP011")
             return ret
-        if name in ("as_slice", "as_mut_slice") and not e.args and base.name in ("[]", "[;]", "vector") and base.args:
+        if name in ("as_slice", "as_mut_slice") and not e.args and base.name in ("[]", "[;]", "vector", "secure_vector") and base.args:
             mut = name == "as_mut_slice"
             e.recv_mode = "mut" if mut else "ref"
             if mut:
@@ -1599,7 +1600,7 @@ class BodyChecker:
         if isinstance(e.index, ast.RangeExpr):
             return UNKNOWN
         self.coerce(e.index, it, T.prim("usize"), "the index")
-        return t.args[0] if t.name in ("[]", "[;]", "vector") and t.args else UNKNOWN
+        return t.args[0] if t.name in ("[]", "[;]", "vector", "secure_vector") and t.args else UNKNOWN
 
     def e_Try(self, e: ast.Try) -> Ty:
         t = self.expr(e.expr)
@@ -1801,7 +1802,7 @@ class BodyChecker:
         else:
             it = getattr(e.iter, "ty", None)
             inner = it.args[0] if it is not None and it.name == "&" else it
-            if inner is not None and inner.name in ("[]", "[;]", "vector") and inner.args:
+            if inner is not None and inner.name in ("[]", "[;]", "vector", "secure_vector") and inner.args:
                 # a borrowed sequence yields references to its elements; an array by value yields its elements
                 var_ty = Ty("&", (inner.args[0],), mut=it.mut) if it.name == "&" else inner.args[0]
 

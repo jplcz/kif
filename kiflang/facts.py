@@ -50,7 +50,7 @@ RESULT_FACTS = ("some", "non_null", "non_empty", "len_ge")
 FN_ATTRS = ("ensures", "preserves")
 API_ATTRS = ("when", "len_of", "unchecked_form")
 _INTS = frozenset("u8 u16 u32 u64 usize i8 i16 i32 i64 isize".split())
-_SEQ = ("vector", "str", "str_view")
+_SEQ = ("vector", "secure_vector", "str", "str_view")
 _PTR = ("ptr", "c_ptr", "c_cptr")
 
 

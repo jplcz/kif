@@ -273,3 +273,20 @@ def test_moved_from_secure_struct_slot_is_wiped_once_before_its_dead():
 
 def test_a_secure_struct_that_is_never_moved_gets_no_slot_wipe():
     assert "wipe %a" not in wiped(STRUCT + "fn f() -> u32 { let a = key { k: [1, 2, 3, 4], n: 7 }; return a.n; }")
+
+
+def test_secure_vector_element_must_be_plain_kifw007():
+    src = "#[secure_wipe]\nstruct k { a: u32 }\nfn f(a: secure_vector<k>, b: secure_vector<u8>, c: secure_vector<str>) -> u32 { return 0; }\nfn g<T>(a: secure_vector<T>) -> u32 { return 0; }\n"
+    bad = [d for d in analyze(src).diagnostics if d.code == "KIFW007"]
+    assert len(bad) == 2
+
+
+def test_secure_vector_field_is_dropped_not_cleared_first():
+    from kiflang import kifc, lower_c, target
+    from kiflang.symbols import analyze
+
+    src = "#[secure_wipe]\nstruct buf { n: u32, data: secure_vector<u8> }\n#[export]\nfn go(b: buf) -> u32 { return b.n; }\n"
+    files = lower_c.lower(analyze("/t/m.kif", src, kifc.import_resolver([]), cfg_env=target.load("c").cfg_env()), target.load("c"), "m")
+    h = next(v for k, v in files.items() if k.endswith(".h"))
+    fields = h[h.index("void buf_drop_fields(struct buf *self)\n{"):]
+    assert "KIF_SECURE_WIPE(&self->data" not in fields.split("}")[0] and "kif_svec_u8_drop(&self->data)" in fields

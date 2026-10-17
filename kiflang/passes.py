@@ -347,6 +347,10 @@ class WipesPass(Pass):
             if rng is not None:
                 ctx.diagnostics.append(dg.info(rng, "KIFW102", f"secure variable {src.name!r} is copied into {st.local.name!r}, which is not secure and is never wiped "
                                                                 "(mark it #[secure_wipe] or avoid the copy)"))
+        for _, i in ctx.fn.instrs():
+            rng = getattr(i.site, "range", None) if isinstance(i, ir.Call) and i.callee.endswith("unwrap_unwiped") else None
+            if rng is not None:
+                ctx.diagnostics.append(dg.info(rng, "KIFW103", "secure_vector::unwrap_unwiped() hands a secret buffer to an unwiped vector (keep the data in the secure_vector)"))
         return wipes.analyze(ctx.fn, ctx.get("cfg"))
 
 

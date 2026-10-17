@@ -1,0 +1,8 @@
+0 45
+0 1
+grown 0, 2 wiped blocks freed, 0 unwiped
+pop 0, vacated 0
+erase 0, vacated 0
+shrink 0, vacated 0 0
+clear, vacated 0
+dropped, freed 3 blocks, 0 unwiped

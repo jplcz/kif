@@ -1,0 +1,20 @@
+// secure_vector<T>: the same operations as vector<T>, but whatever it releases is wiped first (docs/kif-secure-wipe.md rule W12).
+fn grow() -> result<u32> {
+    let mut v: secure_vector<u32> = secure_vector::try_create(2)?;
+    for i in 0..9 { v.try_push(i + 1)?; }
+    let mut t: u32 = 0;
+    for i in 0..v.len() { t += v[i]; }
+    ok(t)
+}
+
+fn shrink() -> result<usize> {
+    let mut v: secure_vector<u8> = secure_vector::try_create(0)?;
+    v.try_resize(6)?;
+    v[0] = 9;
+    v.try_pop()?;
+    v.try_erase_at(0)?;
+    v.try_resize(1)?;
+    let c = v.try_clone()?;
+    v.clear();
+    ok(c.len() + v.len())
+}

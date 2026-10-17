@@ -214,6 +214,33 @@ extern "C++" impl<T> vector<T> {
     fn drop(&mut self);
 }
 
+// `secure_vector<T>`: a vector whose growth, shrinking and drop wipe what they release (docs/kif-secure-wipe.md rule W12). Only trivial
+// elements (KIFW007); same operations, no conversion to or from `vector`.
+#[cxx_name("reloco::secure_vector"), header("reloco/secure_vector.hpp"), send(T), sync(T)]
+extern "C++" type secure_vector<T>;
+
+extern "C++" impl<T> secure_vector<T> {
+    #[allocates] fn try_create(capacity: usize) -> result<Self>;
+    #[allocates] fn try_allocate(alloc: allocator_ref, capacity: usize) -> result<Self>;
+    #[allocates] fn try_clone(&self) -> result<Self>;                                // needs `T: cloneable` (checked at use)
+    #[len_of] fn len(&self) -> usize;
+    #[when(false, non_empty)] fn is_empty(&self) -> bool;
+    fn capacity(&self) -> usize;
+    #[lang(index), unchecked_form(unsafe_at, lt_len(i))] fn index(&self, i: usize) -> &T;   // `v[i]`: checked, panics out of range
+    #[lang(index), preserves] fn index_mut(&mut self, i: usize) -> &mut T;
+    fn try_at(&self, i: usize) -> result<&T>;
+    #[unsafe] fn unsafe_at(&self, i: usize) -> &T;
+    #[allocates, preserves] fn try_push(&mut self, value: T) -> result<()>;
+    fn try_pop(&mut self) -> result<()>;
+    #[allocates, preserves] fn try_reserve(&mut self, n: usize) -> result<()>;
+    #[allocates] fn try_resize(&mut self, n: usize) -> result<()>;
+    #[allocates, preserves] fn try_insert_at(&mut self, i: usize, value: T) -> result<()>;
+    fn try_erase_at(&mut self, i: usize) -> result<()>;
+    fn clear(&mut self) -> ();
+    fn drop(&mut self);
+    #[unsafe] fn unwrap_unwiped(self) -> vector<T>;                                 // hands the buffer to an unwiped vector (KIFW103)
+}
+
 // Borrowing prelude types carry a lifetime so results are tied to what they borrow: `str_view<'a>`, `sink<'a>` and
 // `c_string_span_sink<'a>`. Users write `str_view`/`sink` and the lifetime is elided as for `&T` (4.2), so
 // `fn view(&self) -> str_view` borrows `self` and `fn pick(a: str_view, b: str_view) -> str_view` is KIFP162.

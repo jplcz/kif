@@ -89,6 +89,25 @@ def wipeable(bc, t: Ty) -> bool:
     return not plain(bc, t) or is_secure_struct(t.sym) or t.name == "secure_vector"
 
 
+def check_secure_vectors(bc, it) -> None:
+    """KIFW007: `secure_vector<T>` with an element that is not plain data (rule W12.1); each written type is checked once."""
+    from .astutil import walk
+
+    seen = bc.__dict__.setdefault("_w007", set())
+    for n in walk(it):
+        if not isinstance(n, ast.PathType) or id(n) in seen or not n.segments or n.segments[-1].name != "secure_vector" or len(n.segments[-1].args) != 1:
+            continue
+        seen.add(id(n))
+        arg = n.segments[-1].args[0]
+        if isinstance(arg, ast.PathType) and bc.is_generic(arg.text):
+            continue
+        t = bc.ty(arg)
+        why = "" if t.name == "?" or t.cat == "unknown" else plain(bc, t)
+        if why:
+            bc.d.append(dg.error(arg.range, "KIFW007", f"secure_vector<{t}>: the element is not plain data ({why}); use trivial elements, "
+                                                       "or hold owning or secure values in a secure struct that has the vector as a field"))
+
+
 def _shared(t: Ty) -> bool:
     return t.name == "atomic"
 
