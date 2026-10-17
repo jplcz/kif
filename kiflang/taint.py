@@ -146,6 +146,11 @@ def _line(n) -> int:
     return n.range.start.line + 1
 
 
+def _takes_taint(p) -> bool:
+    """A parameter declared `#[tainted]`, or one the effective policy taints (`Param.effective_taint`, set by `modsec.annotate`)."""
+    return _has(getattr(p, "attrs", []), "tainted") or getattr(p, "effective_taint", False)
+
+
 def _field_tainted(f) -> bool:
     return _has(f.attrs, "tainted")
 
@@ -226,7 +231,7 @@ class _Walk:
 
     def accepts(self, p) -> bool:
         """Whether a parameter may receive tainted data: declared `#[tainted]`, or of a struct type that carries taint itself."""
-        if _has(getattr(p, "attrs", []), "tainted"):
+        if _takes_taint(p):
             return True
         d = self.struct_ast(p.ty) if p.ty is not None else None
         return d is not None and (_has(d.attrs, "tainted") or self.any_field(d) is not None)
@@ -486,7 +491,7 @@ class _Walk:
     def written_by(self, name: str, params, exprs, rng) -> None:
         """A `&mut` argument for a #[tainted] parameter: the callee may store tainted data there, so the local becomes tainted."""
         for p, a in zip(params, exprs):
-            if _has(getattr(p, "attrs", []), "tainted") and isinstance(a, ast.Unary) and a.op == "&mut":
+            if _takes_taint(p) and isinstance(a, ast.Unary) and a.op == "&mut":
                 root = a.operand
                 while isinstance(root, (ast.FieldAccess, ast.Index)):
                     root = root.expr

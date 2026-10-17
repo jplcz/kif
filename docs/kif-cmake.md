@@ -134,6 +134,22 @@ property** of the same name that `kif_target_sources()` reads:
 | `KIF_SANITIZE`, `KIF_CFG` | lists (`--sanitize`, `--cfg`) |
 | `KIF_INCLUDE_DIRECTORIES` | import search dirs (`-I`) |
 | `KIF_WERROR` | warnings are errors (`--Werror`) |
+| `KIF_TRUST` | PEM files of pinned keys/CA certificates (`--trust`); relative paths are resolved against the calling directory |
+| `KIF_REVOKED` | PEM files of revoked keys/certificates/CRLs (`--revoked`) |
+| `KIF_SIGNING` | `off`, `warn` (default) or `require` (`--signing`) for precompiled `.kifm` imports |
+| `KIF_PROVER` | `any` or `same` (`--prover`); `same` makes a different vendor prover KIFI041 an error |
+
+Trust and revocation files are dependencies of every generated file, so changing a key re-runs the checks.
+Variables (`-DKIF_TRUST=...`), `kif.toml` `[signing]` (`KIF_PROJECT_TRUST/REVOKED/SIGNING/PROVER`), target properties
+and keywords (`KIF_TRUST`, `KIF_REVOKED`, `KIF_SIGNING` of `add_kif_library`/`kif_target_sources`) follow the usual precedence.
+
+```cmake
+# Require every precompiled import to be signed by a key under our pinned vendor CA.
+add_kif_library(drv SOURCES drv.kif BACKENDS c
+    KIF_TRUST   keys/vendor-ca.pem   # pinned CA; a signer's certificate must be issued by it
+    KIF_REVOKED keys/revoked.pem     # offline CRL / revoked fingerprints
+    KIF_SIGNING require)             # unsigned or untrusted imports are errors (default: warn)
+```
 
 Precedence, highest first: keyword > target property > `-DKIF_*` > `kif.toml` (`kif_use_project()`) > `CMAKE_BUILD_TYPE`
 (Debug->debug, RelWithDebInfo->perf, Release/MinSizeRel->release). List settings add up across levels. `kifc` always runs

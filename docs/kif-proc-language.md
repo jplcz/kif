@@ -1940,6 +1940,14 @@ Prefix `KIFP`, so they never collide with `KIFnnn` or `KIFLnnn`.
 | KIFP052 | `gen fn` or `const` evaluation reaches a function that uses `unsafe` or `extern`. |
 | KIF013 | An `import` path is not allowed with `--sysroot` (absolute, `..`, `\\`, a symlink out of the sysroot, or `x.kif` and `x.kifm` both present), or the sysroot has no `reloco.kif`. |
 | KIF014 | A `.kifm` is malformed, truncated, modified (digest mismatch) or of a newer format version. |
+| KIF016 | A `.kifm` was compiled for another language (`c` vs `cxx`) than the importing build: its object code cannot be linked. |
+| KIF017 | Warning: a `.kifm` was compiled for another target of the same language; its barrier snippets and overflow behaviour are the vendor's. |
+| KIF018 | A `.kifm` carries a signature that does not verify (the file changed after signing). Always an error. |
+| KIF019 | A `.kifm` is unsigned, or signed by a key the consumer did not pin (`--trust`). Warning under `--signing warn` (default), error under `require`, silent under `off`. Names the import path through which the file was reached. |
+| KIF020 | A `.kifm` is signed by a revoked key or certificate (`--revoked`). Always an error. |
+| KIF021 | A signature has to be checked but the host has neither the Python `cryptography` package nor OpenSSL 3, or the trust or revocation list cannot be read. Always an error; never "accept because crypto is missing". |
+| KIFI040 | `#[require_proved]` calls into a `.kifm` function whose recorded `kept_checks` holds a demanded kind, or that has no recorded analysis. |
+| KIFI041 | The `.kifm` was proved by another compiler (`compiler.prover` differs). Warning; error with `--prover-must-match`. |
 | KIF015 | A precompiled module was built against a different version of one of its imports. |
 | KIFP017 | A `fn` without a body in a source file (only `.kifm` modules declare functions that way). |
 | KIFP100 | Trap while evaluating (overflow-checked operation, index, division, shift, bad enum cast). |
@@ -2080,7 +2088,26 @@ traps).
 
 `embedded` lists the bodies that stay readable so a vendor can review what a release exposes.
 
-The importer verifies the file: a wrong magic, truncation, a newer `version` or a `text` that does not match `digest` is
+Three more keys carry the safety contracts and security boundaries that the stripped bodies no longer show (design and rationale:
+`docs/kif-module-contracts.md`): `compiler` (the exporting compiler: `name`, `version`, `prover` identity, `security_schema`),
+`security` (target, profile and taint policy the vendor compiled under; per function the *effective* tainted parameters, tainted
+result, sanitizer evidence `checked`/`trusted`, fact contracts, `unsafe`, speculation barrier counts, the check kinds the compiled body
+`kept` or `proved`, and the IR hash; per type the taint it carries) and `security_digest` (sha256 of the canonical encoding of
+`security`). `export` takes the same `--target`, `--profile`, `--sanitize` and `--cfg` as `check`, because the section records what the module was
+compiled for. All three are required: a file without them is malformed, never read as "nothing is tainted".
+
+`export --sign KEY.pem [--cert CERT]` signs the file with the vendor's Ed25519 private key (PKCS#8 PEM, read from the file only); the header gets a
+`signature` (algorithm, signer, public key, optional certificate, value) over all other keys, so changing any byte of it, `security`
+included, is detected. Signing is deterministic. `python -m kiflang verify OUT.kifm --trust vendors.pem [--revoked revoked.pem]` prints who
+signed it and whether the consumer's own trust list vouches for that key (exit 0 only then); the file's embedded key proves nothing by
+itself. Signing needs the Python `cryptography` package or the `openssl` tool on the host; kif contains no cryptography of its own.
+
+`python -m kiflang inspect OUT.kifm` prints the header for a human (module, compiler and prover, target, profile, taint policy,
+digest, and per function its tainted parameters, sanitizer evidence, kept and proved checks and IR hash); it validates the file like
+an import does and exits 1 when it is bad. A function that is generic stays in source and is listed as `embedded`.
+
+The importer verifies the file: a wrong magic, truncation, a newer `version`, a `text` that does not match `digest`, a
+`security` section that does not match `security_digest` or that disagrees with the declarations in `text` is
 KIF014. `deps` records the digest of each import *as exported*, which is the same whether the dependency is present as source or as
 `.kifm`; if the importer's copy differs the import fails with KIF015 (the typical "base module was updated, the vendor module
 was not rebuilt" error).

@@ -4,6 +4,8 @@
 
 """Inlay hints for run-time checks: what they show, and the grace period that keeps typing cheap."""
 
+import os
+
 from kiflang.lsp import Server, path_to_uri
 
 SRC = ("fn f(a: &[u32], i: usize) -> u32 { if i < a.len() { a[i] } else { a[0] } }\n"
@@ -154,3 +156,27 @@ def test_code_lens_counts_the_callers_of_each_untaint_function():
     lenses = out[0]["result"]
     assert [l["command"]["title"] for l in lenses] == ["untaint: 1 caller"], lenses
     assert lenses[0]["range"]["start"]["line"] == 1
+
+
+def test_hover_on_a_precompiled_function_shows_the_vendor_origin(tmp_path):
+    from kiflang import modfile
+    from kiflang.symbols import analyze
+
+    vendor = "namespace ddk;\n#[untaint(trusted)]\nfn vouched(#[tainted] x: usize) -> usize { x }\nfn raw(a: &[u32], i: usize) -> u32 { a[i] }\n"
+    from kiflang.sysroot import Sysroot
+    import shutil, kiflang
+
+    sysroot = tmp_path / "sysroot"
+    sysroot.mkdir()
+    for name in ("reloco.kif", "microfmt.kif"):
+        shutil.copy(os.path.join(os.path.dirname(kiflang.__file__), "prelude", name), sysroot / name)
+    (sysroot / "ddk.kifm").write_bytes(modfile.export(analyze("/v/ddk.kif", vendor)))
+    src = 'import "ddk.kif";\nfn f(a: &[u32]) -> u32 { ddk::raw(a, 0) }\n'
+    r = Rig("off")
+    r.uri = path_to_uri(str(tmp_path / "m.kif"))
+    r.s.module = lambda uri: analyze(r.s.key(uri), r.s.docs[uri], sysroot=Sysroot(str(sysroot)))   # the server's file resolver reads `.kif` only
+    r.open(src)
+    col = src.split("\n")[1].index("raw") + 1
+    out = r.s.handle({"id": 9, "method": "textDocument/hover", "params": {"textDocument": {"uri": r.uri}, "position": {"line": 1, "character": col}}})
+    value = out[0]["result"]["contents"]["value"]
+    assert "From `ddk.kifm`" in value and "keeps index checks" in value, value

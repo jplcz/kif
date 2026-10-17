@@ -26,8 +26,11 @@ backend and the FreeBSD kobj output are not implemented yet.
 | `reflect.py` | Read-only reflection handles (`Module`, `Interface`, `Method`, `Type`, `Attr`, ..) the interpreter gives to `gen fn` (section 6.1) |
 | `cells.py` | `#[tls]`/`#[per_cpu]` statics and `slot<T>`: zeroable and constant-initialiser checks, accessors, per-CPU and TLS rules (section 4.17); the interpreter has no cells |
 | `sysroot.py` | `--sysroot`: the exact, only place `import` reads from (unlike C/C++, no other search paths or fallbacks; see doc §15.2); `Sysroot` is what tools use |
-| `modfile.py`, `cbor.py` | Precompiled `.kifm` modules (bodies stripped, generics kept, digests) and the CBOR codec |
-| `__main__.py` | `python -m kiflang check\|export\|modules` |
+| `modfile.py`, `cbor.py` | Precompiled `.kifm` modules (bodies stripped, generics kept, digests, `security` and `compiler` sections) and the CBOR codec |
+| `modsec.py`, `prover_id.py` | The `.kifm` `security` section: every safety contract and security-boundary fact, written by the exporter and re-derived from the text by the reader (KIF014); the identity of the check machinery |
+| `modsign.py` | Signing and verifying `.kifm` files (Ed25519, X.509, CRL) through the host's crypto only: the `cryptography` package, else the `openssl` tool; no primitives of its own |
+| `irhash.py` | Meaning-based hash of a function's raw IR (`kif ir --hash`) |
+| `__main__.py` | `python -m kiflang check\|export\|modules\|inspect\|verify` |
 | `interp.py` | Tree-walking interpreter over the checked AST (plain-data subset): C-exact integer semantics, structs, enums, arrays, references, methods, lambdas; generation-time `str`/`Vec`/`Option`/`format!`; traps `KIFP100`, `fail!` `KIFP102`, unavailable calls `KIFP101`, limits `KIFP103` |
 | `mimport.py` | `.m` importer: `python3 -m kiflang.mimport [-o out.kif] file.m` converts a FreeBSD kobj interface to `.kif` (`CODE`/`HEADER` become `code(c)`/`header(c)`, `PROLOG`/`EPILOG` become `m_prolog`/`m_epilog`, C types are declared `extern "C" type`); checked over every `sys/**/*.m` by `tests/test_mimport.py` |
 | `lsp.py` | language server over stdio (`python3 -m kiflang.lsp`, `kif-lsp`): diagnostics, symbols, definition, hover, references, rename, completion, formatting, quick fixes, `kif/importM`; see `docs/kif-tools.md` |

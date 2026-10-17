@@ -51,6 +51,13 @@ sources      = ["src/*.kif"]  # what `kif build` with no file builds; add_kif_li
 config   = ".kiflint"         # rule levels                                                (--config)
 baseline = ["base.json"]      # ABI manifests to compare against                           (--baseline)
 
+[signing]                     # the consumer's policy for signed .kifm files (docs/kif-module-contracts.md section 11.3)
+trust         = ["keys/vendors.pem"]   # pinned public keys / certificates, PEM; never read from the sysroot      (--trust)
+revoked       = ["keys/revoked.pem"]   # revoked keys, certificates, CRLs (a CRL counts if a pinned CA issued it)  (--revoked)
+allow-revoked = ["sha256:..."]         # fingerprints accepted although revoked; the audit report prints them     (--allow-revoked)
+mode          = "warn"                 # off | warn | require: what an unsigned or untrusted .kifm is              (--signing)
+prover        = "any"                  # any | same: a .kifm proved by another compiler is a warning or an error  (--prover)
+
 [fmt]
 indent   = 4                  #                                                            (--indent)
 
@@ -60,7 +67,7 @@ interval = 0.5                # seconds between polls of `--watch`
 
 ## CMake integration of `kif.toml`
 
-`kif_use_project([FILE kif.toml])` runs `kif project --cmake`, includes the generated fragment (variables `KIF_PROJECT_TARGET`,
+`kif_use_project([FILE kif.toml])` runs `kif project --cmake`, includes the generated fragment (variables `KIF_PROJECT_TRUST`/`_REVOKED`/`_SIGNING`/`_PROVER` (from `[signing]`), `KIF_PROJECT_TARGET`,
 `_PROFILE`, `_SANITIZE`, `_CFG`, `_INCLUDE`, `_SYSROOT`, `_WERROR`, `_SOURCES`) and re-runs configure when the file changes.
 Those are the lowest-priority defaults: keyword > target property > `-DKIF_*` > `kif.toml` > `CMAKE_BUILD_TYPE`. Output
 directories (`[build] c/freebsd`) are command line only; CMake chooses its own. Generation always runs `kifc --no-project`, so

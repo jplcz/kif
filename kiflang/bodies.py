@@ -65,7 +65,7 @@ from . import ast
 from . import cells
 from . import cfg
 from . import places
-from . import taint
+from . import taint, vendor
 from .intrinsics import CT_ARITY, SPEC_ARITY   # the compiler-synthesized `ct::` intrinsics (docs/kif-taint.md section 7)
 from . import cmode
 from . import diagnostics as dg
@@ -449,6 +449,7 @@ class BodyChecker:
         try:
             self.scoped(gens, go)
             taint.check_body(self, f)
+            vendor.check_body(self, f)
         finally:
             self.param_ty = saved_params
             self.cur, self.unsafe = saved_cur, saved_unsafe

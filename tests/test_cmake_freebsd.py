@@ -80,3 +80,23 @@ def test_target_properties_and_keywords_feed_kifc(tmp_path):
     ninja = (b / "build.ninja").read_text()
     assert "--cfg smp" in ninja and "--profile perf" in ninja and "--sanitize undefined" in ninja
     assert ninja.count("--target freebsd-kernel") >= 2
+
+
+def test_signing_policy_reaches_kifc(tmp_path):
+    """TRUST, REVOKED and SIGNING (keyword, -D and kif.toml [signing]) become kifc options, and the key files are build dependencies."""
+    (tmp_path / "uart.kif").write_text(IFACE)
+    (tmp_path / "ca.pem").write_text("x\n")
+    (tmp_path / "crl.pem").write_text("x\n")
+    (tmp_path / "kif.toml").write_text('target = "freebsd-kernel"\n[build]\nsources = ["*.kif"]\n[signing]\ntrust = ["ca.pem"]\nmode = "require"\n')
+    (tmp_path / "CMakeLists.txt").write_text(
+        f"cmake_minimum_required(VERSION 3.20)\nproject(t C CXX)\nlist(APPEND CMAKE_MODULE_PATH {ROOT / 'cmake'})\ninclude(Kif)\n"
+        "kif_use_project()\nadd_kif_library(a BACKENDS c)\n"
+        "add_kif_library(b SOURCES uart.kif BACKENDS c KIF_REVOKED crl.pem KIF_SIGNING warn)\n")
+    b = tmp_path / "b"
+    r = subprocess.run(["cmake", "-G", "Ninja", "-S", str(tmp_path), "-B", str(b)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    ninja = (b / "build.ninja").read_text()
+    assert f"--trust {tmp_path / 'ca.pem'}" in ninja
+    assert "--signing require" in ninja and "--signing warn" in ninja
+    assert f"--revoked {tmp_path / 'crl.pem'}" in ninja
+    assert str(tmp_path / "ca.pem") in ninja.split("build ", 1)[1]

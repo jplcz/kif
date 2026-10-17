@@ -16,16 +16,18 @@ in source form:
   can see what a release exposes and keep secrets out of those.
 
 Keys of the map: `magic` ("KIFM"), `version` (1), `name`, `text`, `digest` (sha256 hex of `text`), `deps` (import path ->
-digest of the imported module's exported text), `stripped` (number of bodies removed) and `embedded` (names). Unknown keys are
-ignored, a newer `version` is rejected.
+digest of the imported module's exported text), `stripped` (number of bodies removed), `embedded` (names), `compiler` (the
+exporting compiler: name, version, prover identity, security schema), `security` (every safety contract and security-boundary fact an
+importer's checks need, `kiflang/modsec.py`) and `security_digest` (sha256 hex of the canonical encoding of `security`). Unknown keys
+are ignored, a newer `version` is rejected. Design: docs/kif-module-contracts.md.
 """
 
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from . import ast, cbor
+from . import ast, cbor, modsec
 
 MAGIC = "KIFM"
 VERSION = 1
@@ -92,8 +94,19 @@ def digest_of(mod) -> str:
     return header["digest"] if header else sha256(strip(mod)[0])
 
 
-def export(mod) -> bytes:
-    """The `.kifm` bytes of an analysed module (its imports are recorded by digest, not embedded)."""
+def security_digest(security: Any) -> str:
+    return hashlib.sha256(cbor.dumps(security)).hexdigest()
+
+
+def export(mod, target_name: str = "c", profile: Optional[str] = None, sign: Optional[Tuple[bytes, Optional[bytes]]] = None) -> bytes:
+    """The `.kifm` bytes of an analysed module (its imports are recorded by digest, not embedded). `target_name` and `profile` are what
+    the module was analysed for; they are recorded in the `security` section. `sign` is `(private key PEM, certificate or None)`: the
+    header then carries a `signature` over everything else (docs/kif-module-contracts.md, section 11); `modsign.CryptoError` when it cannot."""
+    from . import modsec, prover_id, target
+    from . import __version__
+
+    tgt = target.load(target_name)
+    security = modsec.build(mod, tgt.name, tgt.profile(profile)["name"], tgt.language)
     text, stripped, embedded = strip(mod)
     deps: Dict[str, str] = {}
     for it in mod.tree.items:
@@ -101,10 +114,17 @@ def export(mod) -> bytes:
             dep = getattr(mod, "imported", {}).get(it.path)
             if dep is not None:
                 deps[it.path] = digest_of(dep)
-    return cbor.dumps({
+    header = {
         "magic": MAGIC, "version": VERSION, "name": mod.name, "text": text, "digest": sha256(text),
         "deps": deps, "stripped": stripped, "embedded": sorted(embedded),
-    })
+        "compiler": {"name": "kif", "version": __version__, "prover": prover_id.prover_id(), "security_schema": modsec.SCHEMA},
+        "security": security, "security_digest": security_digest(security),
+    }
+    if sign is not None:
+        from . import modsign
+
+        header = modsign.sign(header, sign[0], sign[1])
+    return cbor.dumps(header)
 
 
 def decode(data: bytes) -> Dict[str, Any]:
@@ -124,4 +144,23 @@ def decode(data: bytes) -> Dict[str, Any]:
         raise ModuleFileError(".kifm digest does not match its text (file was modified or corrupted)")
     if not all(isinstance(k, str) and isinstance(v, str) for k, v in h["deps"].items()):
         raise ModuleFileError(".kifm field 'deps' must map paths to digests")
+    comp = h.get("compiler")
+    if not isinstance(comp, dict) or not all(isinstance(comp.get(k), str) for k in ("name", "version", "prover")) \
+            or not isinstance(comp.get("security_schema"), int):
+        raise ModuleFileError(".kifm field 'compiler' is missing or malformed")
+    if comp["security_schema"] > modsec.SCHEMA or comp["security_schema"] < 1:
+        raise ModuleFileError(f"unsupported .kifm security schema {comp['security_schema']!r} (this compiler reads up to {modsec.SCHEMA})")
+    try:
+        modsec.validate(h.get("security"))
+    except ValueError as exc:
+        raise ModuleFileError(f".kifm security section: {exc}") from exc
+    if not isinstance(h.get("security_digest"), str) or security_digest(h["security"]) != h["security_digest"]:
+        raise ModuleFileError(".kifm security section does not match its digest (file was modified or corrupted)")
+    if "signature" in h:
+        from . import modsign
+
+        try:
+            modsign.validate_shape(h["signature"])
+        except ValueError as exc:
+            raise ModuleFileError(f".kifm {exc}") from exc
     return h

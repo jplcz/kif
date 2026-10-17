@@ -18,10 +18,13 @@
 # Per-target settings (win over the build-wide ones below): keywords of add_kif_library()/kif_target_sources(), and for an existing
 # target the properties of the same name, read by kif_target_sources():
 #   KIF_TARGET KIF_PROFILE KIF_SYSROOT KIF_SANITIZE KIF_CFG KIF_INCLUDE_DIRECTORIES KIF_WERROR
+#   KIF_TRUST KIF_REVOKED KIF_SIGNING   (the signing policy for precompiled .kifm imports, docs/kif-module-contracts.md section 11.3)
 #   set_target_properties(mod PROPERTIES KIF_TARGET freebsd-kernel KIF_CFG "smp")  then  kif_target_sources(mod SOURCES x.kif BACKEND c)
 #
 # Build-wide defaults for every `kifc` run (an explicit KIFC_ARGS wins; -D on the command line wins over kif.toml):
 #   KIF_TARGET  KIF_PROFILE  KIF_SANITIZE  KIF_CFG  KIF_INCLUDE_DIRS  KIF_SYSROOT  KIF_WERROR
+#   KIF_TRUST  KIF_REVOKED (PEM files, relative to the calling directory)  KIF_SIGNING (off|warn|require)  KIF_PROVER (any|same)
+# The trust and revocation files are dependencies of every generated file, so changing one re-runs the checks.
 # KIF_PROFILE defaults to a mapping of CMAKE_BUILD_TYPE: Debug -> debug, RelWithDebInfo -> perf, Release/MinSizeRel -> release.
 # `kifc` is always run with --no-project: the build is described by CMake, never by whichever kif.toml is nearest to the build tree.
 
@@ -71,6 +74,29 @@ function(_kif_base_args out)
         foreach(v IN LISTS values)
             list(APPEND args --${opt} "${v}")
         endforeach()
+    endforeach()
+    foreach(key IN ITEMS TRUST REVOKED)
+        if(DEFINED KIF_${key})
+            set(values ${KIF_${key}})
+        else()
+            set(values ${KIF_PROJECT_${key}})
+        endif()
+        string(TOLOWER "${key}" opt)
+        foreach(v IN LISTS values)
+            get_filename_component(v "${v}" ABSOLUTE)
+            list(APPEND args --${opt} "${v}")
+        endforeach()
+    endforeach()
+    foreach(key IN ITEMS SIGNING PROVER)
+        if(DEFINED KIF_${key})
+            set(value "${KIF_${key}}")
+        else()
+            set(value "${KIF_PROJECT_${key}}")
+        endif()
+        string(TOLOWER "${key}" opt)
+        if(NOT value STREQUAL "")
+            list(APPEND args --${opt} "${value}")
+        endif()
     endforeach()
     foreach(dir IN LISTS KIF_PROJECT_INCLUDE KIF_INCLUDE_DIRS)
         list(APPEND args -I "${dir}")
@@ -128,9 +154,9 @@ endfunction()
 # Each setting is a keyword of add_kif_library()/kif_target_sources() or, when `tgt` already exists, the target property of the same
 # name (set_target_properties(tgt PROPERTIES KIF_TARGET freebsd-kernel KIF_CFG "smp;debug_locks")). A keyword beats the property.
 function(_kif_property_args out tgt)
-    cmake_parse_arguments(P "KIF_WERROR" "KIF_TARGET;KIF_PROFILE;KIF_SYSROOT" "KIF_SANITIZE;KIF_CFG;KIF_INCLUDE_DIRECTORIES" ${ARGN})
+    cmake_parse_arguments(P "KIF_WERROR" "KIF_TARGET;KIF_PROFILE;KIF_SYSROOT;KIF_SIGNING" "KIF_SANITIZE;KIF_CFG;KIF_INCLUDE_DIRECTORIES;KIF_TRUST;KIF_REVOKED" ${ARGN})
     set(args)
-    foreach(key IN ITEMS KIF_TARGET KIF_PROFILE KIF_SYSROOT KIF_SANITIZE KIF_CFG KIF_INCLUDE_DIRECTORIES)
+    foreach(key IN ITEMS KIF_TARGET KIF_PROFILE KIF_SYSROOT KIF_SANITIZE KIF_CFG KIF_INCLUDE_DIRECTORIES KIF_TRUST KIF_REVOKED KIF_SIGNING)
         set(values "${P_${key}}")
         if(values STREQUAL "" AND tgt AND TARGET ${tgt})
             get_target_property(values ${tgt} ${key})
@@ -145,6 +171,9 @@ function(_kif_property_args out tgt)
             string(TOLOWER "${opt}" opt)
         endif()
         foreach(v IN LISTS values)
+            if(key MATCHES "^KIF_(TRUST|REVOKED)$")
+                get_filename_component(v "${v}" ABSOLUTE)
+            endif()
             list(APPEND args ${opt} "${v}")
         endforeach()
     endforeach()
@@ -193,6 +222,14 @@ function(_kif_generate prefix backend out_dir)
         list(APPEND common_args --Werror)
     endif()
     set(extra_depends)
+    # the trust and revocation files are inputs of every check: a changed key re-runs them
+    set(prev)
+    foreach(a IN LISTS common_args)
+        if(prev MATCHES "^--(trust|revoked)$")
+            list(APPEND extra_depends "${a}")
+        endif()
+        set(prev "${a}")
+    endforeach()
     foreach(m IN LISTS A_CHECK_WITH)
         list(APPEND common_args --check-with "${m}")
         list(APPEND extra_depends "${m}")
@@ -292,10 +329,11 @@ endfunction()
 
 # Compiles the sources of a library. The C++ backend yields `<stem>_if.hpp/.cpp`; FreeBSD yields `<stem>_if.h/.c` and `<stem>_enums.h`.
 function(add_kif_library name)
-    cmake_parse_arguments(A "WERROR;KIF_WERROR" "OUTPUT_DIR;TYPE;VISIBILITY;KIF_TARGET;KIF_PROFILE;KIF_SYSROOT"
-                          "SOURCES;BACKENDS;INCLUDE_DIRS;LINK_LIBRARIES;CHECK_WITH;KIFC_ARGS;KIF_SANITIZE;KIF_CFG;KIF_INCLUDE_DIRECTORIES" ${ARGN})
+    cmake_parse_arguments(A "WERROR;KIF_WERROR" "OUTPUT_DIR;TYPE;VISIBILITY;KIF_TARGET;KIF_PROFILE;KIF_SYSROOT;KIF_SIGNING"
+                          "SOURCES;BACKENDS;INCLUDE_DIRS;LINK_LIBRARIES;CHECK_WITH;KIFC_ARGS;KIF_SANITIZE;KIF_CFG;KIF_INCLUDE_DIRECTORIES;KIF_TRUST;KIF_REVOKED" ${ARGN})
     set(prop_args KIF_TARGET "${A_KIF_TARGET}" KIF_PROFILE "${A_KIF_PROFILE}" KIF_SYSROOT "${A_KIF_SYSROOT}"
-        KIF_SANITIZE ${A_KIF_SANITIZE} KIF_CFG ${A_KIF_CFG} KIF_INCLUDE_DIRECTORIES ${A_KIF_INCLUDE_DIRECTORIES})
+        KIF_SANITIZE ${A_KIF_SANITIZE} KIF_CFG ${A_KIF_CFG} KIF_INCLUDE_DIRECTORIES ${A_KIF_INCLUDE_DIRECTORIES}
+        KIF_TRUST ${A_KIF_TRUST} KIF_REVOKED ${A_KIF_REVOKED} KIF_SIGNING "${A_KIF_SIGNING}")
     if(A_KIF_WERROR)
         list(APPEND prop_args KIF_WERROR)
     endif()
@@ -393,6 +431,7 @@ function(add_kif_library name)
         KIF_MANIFEST "${manifest}"
         KIF_TARGET "${A_KIF_TARGET}" KIF_PROFILE "${A_KIF_PROFILE}" KIF_SYSROOT "${A_KIF_SYSROOT}"
         KIF_SANITIZE "${A_KIF_SANITIZE}" KIF_CFG "${A_KIF_CFG}" KIF_INCLUDE_DIRECTORIES "${A_KIF_INCLUDE_DIRECTORIES}"
+        KIF_TRUST "${A_KIF_TRUST}" KIF_REVOKED "${A_KIF_REVOKED}" KIF_SIGNING "${A_KIF_SIGNING}"
         KIF_FILE_MANIFESTS "${file_manifests}"
         KIF_GENERATED_HEADERS "${all_headers}"
         LINKER_LANGUAGE CXX)
@@ -414,10 +453,11 @@ function(add_kif_executable name)
 endfunction()
 
 function(kif_target_sources target)
-    cmake_parse_arguments(A "WERROR;KIF_WERROR" "BACKEND;OUTPUT_DIR;KIF_TARGET;KIF_PROFILE;KIF_SYSROOT"
-                          "SOURCES;INCLUDE_DIRS;KIFC_ARGS;KIF_SANITIZE;KIF_CFG;KIF_INCLUDE_DIRECTORIES" ${ARGN})
+    cmake_parse_arguments(A "WERROR;KIF_WERROR" "BACKEND;OUTPUT_DIR;KIF_TARGET;KIF_PROFILE;KIF_SYSROOT;KIF_SIGNING"
+                          "SOURCES;INCLUDE_DIRS;KIFC_ARGS;KIF_SANITIZE;KIF_CFG;KIF_INCLUDE_DIRECTORIES;KIF_TRUST;KIF_REVOKED" ${ARGN})
     set(prop_args KIF_TARGET "${A_KIF_TARGET}" KIF_PROFILE "${A_KIF_PROFILE}" KIF_SYSROOT "${A_KIF_SYSROOT}"
-        KIF_SANITIZE ${A_KIF_SANITIZE} KIF_CFG ${A_KIF_CFG} KIF_INCLUDE_DIRECTORIES ${A_KIF_INCLUDE_DIRECTORIES})
+        KIF_SANITIZE ${A_KIF_SANITIZE} KIF_CFG ${A_KIF_CFG} KIF_INCLUDE_DIRECTORIES ${A_KIF_INCLUDE_DIRECTORIES}
+        KIF_TRUST ${A_KIF_TRUST} KIF_REVOKED ${A_KIF_REVOKED} KIF_SIGNING "${A_KIF_SIGNING}")
     if(A_KIF_WERROR)
         list(APPEND prop_args KIF_WERROR)
     endif()

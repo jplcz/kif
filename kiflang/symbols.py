@@ -70,6 +70,8 @@ class Module:
     cfg: Optional[cfg.Env] = None  # the configuration `#[cfg]`/`cfg(..) { }` are tested against (the interpreter, backends)
     header: Optional[dict] = None  # the `.kifm` header when loaded from a precompiled module (bodies are absent)
     imported: Dict[str, "Module"] = field(default_factory=dict)  # `import` path -> module
+    signature_checked: bool = False
+    signature: Optional[object] = None  # the `modsign.Verdict` on a `.kifm`'s signature when a signing policy checked it
 
     @property
     def namespaced(self) -> bool:
@@ -126,10 +128,17 @@ def _load(key: str, text: str, pre: Optional[Module], resolver: Optional[FileRes
     header = getattr(resolver, "headers", {}).get(key)
     if header is not None:
         mod.header = header
+        from . import modsec
+
+        for problem in modsec.check(tree, header["security"]):
+            mod.diagnostics.append(dg.error(_ZERO, "KIF014", problem))
     cache[key] = mod
     mod.modules[mod.name] = mod
     _collect(mod)
     _check_cfg(mod)
+    from . import modsec
+
+    modsec.annotate(mod)
     for it in tree.items:
         if isinstance(it, ast.Import):
             _import(mod, it, resolver, cache, stack + (key,))
@@ -169,12 +178,25 @@ def _import(mod: Module, imp: ast.Import, resolver: Optional[FileResolver], cach
     if key in stack:
         mod.diagnostics.append(dg.error(imp.range, "KIF012", f"import cycle through {imp.path!r}"))
         return
-    other = cache.get(key) or _load(key, text, mod.prelude, resolver, cache, stack)
+    other = cache.get(key) or _load(key, text, mod.prelude, resolver, cache, stack, mod.cfg)
     mod.modules.setdefault(other.name, other)
     mod.imported[imp.path] = other
+    policy = getattr(resolver, "signing", None)
+    if policy is not None and other.header is not None and not other.signature_checked:
+        other.signature_checked = True
+        for severity, code, message in policy.evaluate(other.key, other.header):
+            other.diagnostics.append(getattr(dg, severity)(imp.range, code, message))
+        other.signature = policy.verdicts.get(other.key)
     for d in other.diagnostics:
         if d.code in ("KIF014", "KIF015"):  # a bad or stale precompiled module is the importer's problem too
             mod.diagnostics.append(dg.error(imp.range, d.code, f"{imp.path!r}: {d.message}"))
+        elif d.code in ("KIF018", "KIF019", "KIF020", "KIF021"):  # the signing policy covers the whole import tree: say which import led there
+            mod.diagnostics.append(getattr(dg, "error" if d.severity == dg.ERROR else "warning")(imp.range, d.code, f"{imp.path!r}: {d.message}"))
+    if other.header is not None:
+        from . import modsec
+
+        for severity, code, message in modsec.compat(mod.cfg, other.header["security"]):
+            mod.diagnostics.append(getattr(dg, severity)(imp.range, code, f"{imp.path!r}: {message}"))
     want = (mod.header or {}).get("deps", {}).get(imp.path)
     if want is not None:
         from .modfile import digest_of

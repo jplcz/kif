@@ -37,7 +37,8 @@ class SysrootError(Exception):
 
 
 class Sysroot:
-    def __init__(self, root: str) -> None:
+    def __init__(self, root: str, signing=None) -> None:
+        self.signing = signing  # a `signpolicy.Policy` applied to every `.kifm` it loads; None checks nothing
         self.root = os.path.realpath(root)
         if not os.path.isdir(self.root):
             raise SysrootError(f"sysroot {root!r} is not a directory")
@@ -105,6 +106,7 @@ class SysrootResolver:
 
     def __init__(self, sysroot: Sysroot) -> None:
         self.sysroot = sysroot
+        self.signing = sysroot.signing
         self.headers: Dict[str, dict] = {}  # key -> `.kifm` header, for dependency checks
 
     def __call__(self, importer: str, path: str):

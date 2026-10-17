@@ -22,7 +22,7 @@ from . import cfg as cfgmod
 from . import lower_c
 from . import lower_kobj
 from . import manifest as abi
-from . import project
+from . import modsign, project, signpolicy
 from . import report
 from . import target as targetdef
 from .diagnostics import ERROR, WARNING
@@ -106,12 +106,15 @@ def compile_c(args: argparse.Namespace, path: str) -> int:
         env = tgt.cfg_env(args.cfg, args.profile, sanitize)
         profile = tgt.profile(args.profile)["name"]
         sans = tgt.sanitizers(args.profile, sanitize)
-        sysroot = Sysroot(args.sysroot) if args.sysroot else None
+        policy = signpolicy.from_args(args)
+        if policy.prover == "same":
+            env.values["prover_must_match"] = {"1"}
+        sysroot = Sysroot(args.sysroot, policy) if args.sysroot else None
         with open(path, encoding="utf-8") as f:
             text = f.read()
         resolver = None if sysroot else import_resolver(args.include)
         mod = analyze(os.path.realpath(path), text, resolver, sysroot=sysroot, cfg_env=env)
-    except (targetdef.TargetError, cfgmod.CfgError, SysrootError, OSError) as e:
+    except (targetdef.TargetError, cfgmod.CfgError, SysrootError, OSError, modsign.CryptoError) as e:
         print(f"kifc: {e}", file=sys.stderr)
         return 2
     rep = report.Reporter(args.out_format, sys.stderr, "kifc")
@@ -169,6 +172,7 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--cfg", action="append", default=[], metavar="OPT", help="`flag` or `key=value`; wins over everything")
     ap.add_argument("-I", dest="include", action="append", default=[], metavar="DIR", help="import directory, searched in order after the importing file's own")
     ap.add_argument("--sysroot", metavar="DIR", help="the only place `import` reads from")
+    signpolicy.add_options(ap)
     report.add_format_option(ap)
     ap.add_argument("--Werror", action="store_true", help="warnings fail the build")
     ap.add_argument("--manifest", metavar="FILE", help="also write the ABI manifest of the file")
@@ -187,7 +191,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"kifc: {e}", file=sys.stderr)
         return 2
     if proj:
-        ap.set_defaults(**proj.defaults("build"))  # the command line still wins
+        ap.set_defaults(**proj.defaults("build", "signing"))  # the command line still wins
     args, rest = ap.parse_known_args(argv)
 
     if args.merge_manifest:

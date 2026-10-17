@@ -241,7 +241,7 @@ def explain(fn: ir.Function) -> List[Note]:
     return sorted(out, key=lambda n: (n.line, n.col, n.kind))
 
 
-def report(mod: ir.Module, file: str) -> str:
+def report(mod: ir.Module, file: str, imported=None) -> str:
     """The taint audit of a module as text, for a security review (`kif ir --taint-report`): every sanitizer and how often it is called,
     every `#[trusted]` function, every `untaint!` reason, every speculation barrier, and the tainted sources. Run it on IR the
     `barriers` pass has been over, so the implicit barriers are included."""
@@ -276,7 +276,31 @@ def report(mod: ir.Module, file: str) -> str:
     src = [n for n in notes if n.kind == "source"]
     lines += ["", f"Tainted sources: {len(src)}"]
     lines += [f"  {file}:{n.line}:{n.col}: {n.text} [{n.function}]" for n in src]
+    lines += vendor_lines(imported or {})
     return "\n".join(lines) + "\n"
+
+
+def vendor_lines(imported) -> List[str]:
+    """The audit section for precompiled imports: what each `.kifm` vendor recorded, labelled by where the evidence comes from.
+    A checked sanitizer is `vendor-checked` (the vendor's compiler verified its body), a `#[untaint(trusted)]` one `vendor-trusted`
+    (nobody verified it: audit it)."""
+    out: List[str] = []
+    for path, m in sorted(imported.items()):
+        sec = getattr(m, "header", None) and m.header["security"]
+        if not sec:
+            continue
+        fns = {k: e for k, e in sec["functions"].items() if not e.get("embedded")}
+        san = sorted((k, e["untaint"]) for k, e in fns.items() if e["untaint"])
+        trusted = sorted(k for k, e in fns.items() if e["trusted"])
+        out += ["", f"Precompiled {path} ({m.header['name']}, target {sec['target']}, profile {sec['profile']}, "
+                f"compiler {m.header['compiler']['name']} {m.header['compiler']['version']})"]
+        v = getattr(m, "signature", None)
+        out.append("  signature: not checked" if v is None else "  signature: unsigned" if v.status == "unsigned" else
+                   f"  signature: {v.status}, signed by {v.signer} ({v.fingerprint})")
+        out += [f"  sanitizer {k} (from {path}, vendor-{'trusted' if kind == 'trusted' else 'checked'})" for k, kind in san]
+        out += [f"  #[trusted] export {k} (from {path})" for k in trusted]
+        out += [f"  tainted result {k} (from {path})" for k, e in sorted(fns.items()) if e["tainted_result"]]
+    return out
 
 
 def _is_barrier(i, kind: str) -> bool:

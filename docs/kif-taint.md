@@ -333,6 +333,7 @@ Attribute summary (all validated by `facts.py`-style checks; a misplaced one is 
 | `KIFT007` | a misplaced or contradictory taint attribute (`#[untaint]` with no `#[tainted]` parameter, `#[tainted]` on a local, both `untaint` and `tainted_result`) |
 | `KIFT008` | a tainted call target, or a tainted argument to an indirect call: function value, interface (rule 7) |
 | `KIFT010` | a call of an `#[untaint]` function lacks `untaint!("reason", ..)`, the reason is empty, or `untaint!` wraps something else (rule 9) |
+| `KIFT012` | *information, never an error*: the importing build's taint policy (sinks, `taint.exports: all`) is stricter than the one a `.kifm` was checked under, so the vendor's bodies were not checked for it |
 | `KIFT011` | *information, never an error*: an `#[untaint]` function builds its result from comparisons, `bool` casts or masks instead of `ct::` intrinsics and a `spec::value` barrier |
 | `KIFT009` | an `#[untaint]` function has a side effect: a store, a `&mut` parameter, an allocation, a panic, or a call to a non-pure function (rule 9) |
 
@@ -416,6 +417,11 @@ docs/kif-ir-passes.md): deterministic, cacheable, parallel.
     t.kif:11:13: s(): masked to 0..3 [g]
   ```
 
+  Imports from a `.kifm` get their own block, `Precompiled <path> (...)`: every sanitizer is labelled `vendor-checked` (the
+  vendor's compiler verified its body) or `vendor-trusted` (`#[untaint(trusted)]`: nobody verified it, so audit it), followed by the
+  vendor's `#[trusted]` exports and tainted results. Each line says `from <path>` so the origin is never ambiguous.
+- Hover over a function that comes from a `.kifm` starts with its origin (module, vendor compiler) and what the vendor recorded
+  (kept checks, sanitizer evidence). The language server reads `.kifm` only when its analysis is given a sysroot.
 - `kif ir FILE --explain-taint` prints, per function, the taint of every temp and the origin chain (like `--explain-checks`).
 - **Completion and signature help.** After `ct::` the editor offers the five intrinsics with their synthesized signatures
   (`fn ct::select(c: bool, a: T, b: T) -> T`) and parameter help while typing the arguments; `ct` is also offered as a module name.

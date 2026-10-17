@@ -34,6 +34,8 @@ SECTIONS: Dict[str, Dict[str, Tuple[str, str]]] = {
     },
     "lint": {"config": ("path", "config"), "baseline": ("paths", "baseline")},
     "fmt": {"indent": ("int", "indent")},
+    "signing": {"trust": ("paths", "trust"), "revoked": ("paths", "revoked"), "allow-revoked": ("list", "allow_revoked"),
+                "mode": ("str", "signing"), "prover": ("str", "prover")},
     "watch": {"interval": ("float", "interval")},
 }
 
@@ -202,10 +204,20 @@ class Project:
             else:
                 known = sorted(set(SHARED) | set(SECTIONS))
                 raise ProjectError(f"{path}: unknown key {key!r} (one of {', '.join(known)})")
+        self._check_signing()
 
-    def defaults(self, section: str) -> Dict[str, Any]:
-        """The argparse defaults for a tool: the shared keys, then that tool's own section."""
-        return {**self.shared, **self.sections.get(section, {})}
+    def _check_signing(self) -> None:
+        for dest, allowed in (("signing", ("off", "warn", "require")), ("prover", ("any", "same"))):
+            v = self.sections["signing"].get(dest)
+            if v is not None and v not in allowed:
+                raise ProjectError(f"{self.path}: [signing] {'mode' if dest == 'signing' else dest} must be one of {', '.join(allowed)}, got {v!r}")
+
+    def defaults(self, *sections: str) -> Dict[str, Any]:
+        """The argparse defaults for a tool: the shared keys, then the tool's own sections."""
+        out = dict(self.shared)
+        for s in sections:
+            out.update(self.sections.get(s, {}))
+        return out
 
     def sources(self) -> List[str]:
         """The `.kif` files `[build] sources` names (globs allowed), sorted, relative paths made absolute."""

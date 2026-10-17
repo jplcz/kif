@@ -6,7 +6,8 @@ SPDX-License-Identifier: AGPL-3.0-or-later WITH LicenseRef-Kif-Output-Exception
 
 # Safety contracts and security boundaries in `.kifm` modules
 
-Status: **design**, nothing below is implemented yet. Related: `docs/kif-proc-language.md` section 15 (the `.kifm` format),
+Status: **design**; stages 1 (the `security` and `compiler` sections, `security_digest`, the cross-check), 2 (effective taint read by the checks), 3 (KIFI040, KIFI041, KIF016, KIF017, KIFT012), 4 (`inspect`, audit labels, hover origin) 5 (signing, verification, import policy, project config, CMake) and 6a (`kif ir --hash`) are implemented
+(`kiflang/modsec.py`, `kiflang/prover_id.py`, `kiflang/irhash.py`, `tests/test_modsec.py`, `tests/test_irhash.py`); the rest is not. Related: `docs/kif-proc-language.md` section 15 (the `.kifm` format),
 `docs/kif-taint.md` (the taint feature), `docs/kif-ir.md` (the IR file).
 
 ## 1. Requirement
@@ -207,6 +208,44 @@ shipping it, just as they review `embedded` to keep secrets out of generic bodie
 2. Annotation of loaded declarations and the taint checks reading the effective facts (tests 1 and 2).
 3. `kept_checks` / `proved`, the `compiler` key, KIFI040, KIFI041, target and policy compatibility (KIF016, KIF017, KIFT012) (test 4).
 4. `inspect`, audit report labels, LSP hover origin, documentation in `kif-proc-language.md` section 15 and `kif-taint.md`.
+
+Implementation notes (stage 5a/5b, signing primitives and commands): `kiflang/modsign.py` is the only crypto module and has no primitives:
+back ends `cryptography` then the `openssl` tool (OpenSSL 3+), forced with `KIF_CRYPTO`; none present is `CryptoUnavailable` (exit 2, install
+message). `export --sign KEY.pem [--cert CERT]`, `verify FILE.kifm [--trust PEM].. [--revoked PEM].. [--allow-revoked FP]` (exit 0 only when
+trusted), and `inspect` shows the signature. A CRL counts only when a *pinned* certificate issued it (else ignored with a note); a certificate
+is trusted when pinned or *directly* issued by a pinned CA certificate (`basicConstraints CA:TRUE`; no intermediates). Stage 5c: `kiflang/signpolicy.py` holds the consumer
+policy (`--trust`, `--revoked`, `--allow-revoked`, `--signing off|warn|require`, `--prover any|same`, and `[signing]` in `kif.toml`, command line first).
+`check`, `kifc` and `kif` build one (default `warn`) and attach it to the `Sysroot`; the library default (language server, programmatic `analyze`) is
+no policy. It is evaluated once per `.kifm` when first imported; KIF018-KIF021 are attached to the file and propagated to each importer, prefixed with the
+import path, so a source module is told `'b.kif': 'c.kif': it is not signed`. An idle policy (`off`, no lists) never looks for crypto. A new
+code, KIF021, covers "cannot decide" (no crypto, unreadable list). `--prover same` / `prover = "same"` replace `--prover-must-match` for KIFI041.
+CMake: `KIF_TRUST`, `KIF_REVOKED`, `KIF_SIGNING`, `KIF_PROVER` (build-wide, `kif.toml`, per target; key files are dependencies). Tests: `tests/test_modsign.py`
+runs every back end present.
+
+Implementation notes (stage 4): `python -m kiflang inspect`, the `Precompiled ...` block of `--taint-report`
+(`taint_ir.vendor_lines`) and the hover origin (`lsp.py`). The server's own file resolver reads `.kif` only, so hover origin is
+exercised through a sysroot-based analysis until the server gains one.
+
+Implementation notes (stage 3): the checks are AST-level (`kiflang/vendor.py`, `modsec.compat`) because IR calls into imported modules are
+unresolved. `annotate` stamps each non-embedded `.kifm` declaration with `vendor` (module, key, entry, compiler). `security.language`
+(`c`/`cxx`) is recorded so KIF016 can tell a language mismatch from a target mismatch. `prover_must_match` is a cfg value set by
+`python -m kiflang check --prover-must-match` (the `[signing] prover = "same"` setting arrives with stage 5). Tests: `tests/test_modsec.py`.
+
+Implementation notes (stage 1):
+
+* Function keys: `name` for functions and `extern` functions, `Type::name` for inherent methods, `<Type as Iface>::name` for interface impls (so two
+  impls of one type cannot collide), `Iface::name` for interface methods.
+* The reader re-derives `export`, `tainted_params`, `tainted_result`, `untaint`, `trusted`, `contracts`, `unsafe` and the `types` table from `text`,
+  using the policy recorded in `security.taint` (so the effective set under `exports: "all"` is verified too). `barriers`, `kept_checks`, `proved`
+  and `ir_hash` describe bodies the importer never sees: they are bound by `security_digest` (and the signature), not by the text.
+* `kept_checks` counts operation checks and call requirements that remain after the default pipeline, plus a call whose callee's own guard
+  covers it; an entry assumption (the callee's `requires`) is the caller's to prove and is not counted. Methods are not built to IR yet, so
+  they record `"unknown"` and `ir_hash: null`.
+* Stage 2: `modsec.annotate` runs when a module is loaded and sets `Param.effective_taint` on every parameter that takes tainted data. For a
+  `.kifm` that is the vendor's recorded `tainted_params`; for source it is the attributes plus the module's own `taint.exports`. The taint
+  checker's call rules (`accepts`, `written_by`) read it next to `#[tainted]`, so a call checks identically against source and a `.kifm`
+  (`tests/test_modsec.py`, parity corpus). Imported source now loads under the importer's cfg environment, like the importing file.
+* `compiler.prover` is `prover_id.prover_id()`: a sha256 over the source of the IR builder, the passes, the provers and the fact rules.
 
 ## 10. Decided questions
 

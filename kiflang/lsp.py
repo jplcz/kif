@@ -623,6 +623,15 @@ class Server:
         if doc:
             text += "\n\n" + doc
         notes = taint.describe(sym.node)
+        vendor = getattr(sym.node, "vendor", None)
+        if vendor is not None:
+            e = vendor.entry
+            kept = e["kept_checks"]
+            origin = f"**From `{vendor.module}.kifm`** (precompiled by {vendor.compiler['name']} {vendor.compiler['version']}); its body is not analyzed here, the vendor recorded: "
+            origin += "no analysis" if kept == "unknown" else ("keeps " + ", ".join(kept) + " checks" if kept else "no run-time checks kept")
+            if e["untaint"]:
+                origin += f"; sanitizer, {'vendor-trusted (body not verified)' if e['untaint'] == 'trusted' else 'vendor-checked'}"
+            notes.insert(0, origin + ".")
         if notes:
             text += "\n\n" + "\n\n".join(notes) + "\n\n_Taint: docs/kif-taint.md_"
         return {"contents": {"kind": "markdown", "value": text}, "range": lsp_range(tokens[found[1]].range)}
