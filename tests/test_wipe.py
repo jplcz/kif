@@ -290,3 +290,29 @@ def test_secure_vector_field_is_dropped_not_cleared_first():
     h = next(v for k, v in files.items() if k.endswith(".h"))
     fields = h[h.index("void buf_drop_fields(struct buf *self)\n{"):]
     assert "KIF_SECURE_WIPE(&self->data" not in fields.split("}")[0] and "kif_svec_u8_drop(&self->data)" in fields
+
+
+def test_secure_vector_needs_a_target_with_alloc_and_wipe_kifw008(tmp_path):
+    import json
+
+    import pytest
+
+    from kiflang import kifc, lower_c, target
+    from kiflang.symbols import analyze
+
+    t = tmp_path / "nofree.json"
+    t.write_text(json.dumps({"name": "nofree", "extends": "c", "alloc": {"malloc": None, "zalloc": None, "realloc": None, "free": None}}))
+    tg = target.load(str(t))
+    src = "fn f() -> result<u32> { let v: secure_vector<u8> = secure_vector::try_create(1)?; ok(0) }\n"
+    with pytest.raises(Exception, match="KIFW008"):
+        lower_c.lower(analyze("/t/m.kif", src, kifc.import_resolver([]), cfg_env=tg.cfg_env()), tg, "m")
+
+
+def test_unwrap_unwiped_is_noted_kifw103():
+    from kiflang import ir, passes, symbols
+
+    mod = ir.build_module(symbols.analyze("/t/main.kif", SRC103, None).tree)
+    assert "KIFW103" in [d.code for d in passes.run_function(mod.functions[0], ["wipes"]).diagnostics]
+
+
+SRC103 = ("fn f(v: secure_vector<u8>) -> usize { let w = unsafe { v.unwrap_unwiped() }; return w.len(); }")
