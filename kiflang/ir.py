@@ -58,6 +58,7 @@ class Local:
     param: bool = False
     length: Optional[int] = None  # the element count when the type is an array with a constant length
     owns: bool = False  # the slot holds a value with drop glue (a vector, a string, a struct with a `drop` or an owning field): see Dead.drop
+    taint: bool = False  # a `#[tainted]` parameter: the slot starts out holding untrusted data (docs/kif-taint.md); read by the `taint` pass
 
     @cached_property
     def type(self) -> Type:
@@ -187,6 +188,7 @@ class Call(Instr):
     flows: Optional[List[int]] = None  # which operands the result may borrow from (-1 the receiver, k the k-th of `args`); None: unknown, assume all
     ensures: Optional[Tuple[str, int]] = None  # `#[ensures(f)]` of the callee: (fact, n) the result has (`some`, `non_null`, `non_empty`, `len_ge` with n >= 1 elements)
     preserves: Optional[List[int]] = None  # `#[preserves]` of the callee: the operands (-1 receiver, k the k-th of `args`) that keep every fact the caller knew
+    taint: str = ""  # what the callee's declaration says about its result: `untaint` (clean even from tainted input) or `tainted_result`
     reason: str = ""  # the reason written in `untaint!("reason", f(..))`: the code generators print it as an audit comment
     unguarded: bool = False  # set by the `elide` pass: every fact the callee requires is proved here, so the call may skip the callee's guard (`F__nofacts`)
 
@@ -898,6 +900,7 @@ class _Builder:
                 loc = self.local("self", {"ref": "&Self", "mut": "&mut Self"}.get(p.receiver, self.owner or "Self"), False, True)
             else:
                 loc = self.local(p.name.text, type_text(p.ty), False, True, _array_length(p.ty))
+                loc.taint = any(a.name.text == "tainted" for a in getattr(p, "attrs", []))
             self.fn.params.append(loc)
             self.scopes[-1][loc.name] = loc
             if loc.owns:
@@ -1464,8 +1467,18 @@ class _Builder:
         self.ncalls += 1
         self.call_requirements(e, args, e.args, decl, self.ncalls)
         t = self.temp(self.tys(e))
-        self.emit(Call(t, name, args, recv, kind, qual, self.ncalls, flows=self.flows(decl), ensures=self.ensures_of(decl), preserves=self.preserves_of(decl), site=e))
+        self.emit(Call(t, name, args, recv, kind, qual, self.ncalls, flows=self.flows(decl), ensures=self.ensures_of(decl), preserves=self.preserves_of(decl),
+                       taint=self.taint_of(e, decl), site=e))
         return t
+
+    @staticmethod
+    def taint_of(e, decl) -> str:
+        """`untaint` / `tainted_result` when the callee's declaration (or the extern node the checker resolved) says so."""
+        for node in (getattr(e, "decl", None), decl):
+            for a in getattr(node, "attrs", None) or ():
+                if a.name.text in ("untaint", "tainted_result"):
+                    return a.name.text
+        return ""
 
     def cell_access(self, e: ast.MethodCall):
         """`CELL.with(|v| body)` / `with_mut`: a `Cell` address, then the closure body inline in a scope that binds `v` to it. The value
@@ -1499,7 +1512,8 @@ class _Builder:
             self.ncalls += 1
             self.call_requirements(e, args, e.args, decl, self.ncalls)
             t = self.temp(self.tys(e))
-            self.emit(Call(t, e.callee.text, args, None, kind, qual, self.ncalls, flows=self.flows(decl), ensures=self.ensures_of(decl), preserves=self.preserves_of(decl), site=e))
+            self.emit(Call(t, e.callee.text, args, None, kind, qual, self.ncalls, flows=self.flows(decl), ensures=self.ensures_of(decl), preserves=self.preserves_of(decl),
+                           taint=self.taint_of(e, decl), site=e))
             return t
         fn = self.expr(e.callee)  # a function value: the callee is the first operand
         args = [self.expr(a) for a in e.args]

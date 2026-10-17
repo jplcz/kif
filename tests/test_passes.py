@@ -102,16 +102,16 @@ def test_soft_constraints_and_listed_order_decide_the_order(scratch):
 
 
 def test_pipeline_specs_add_and_remove_passes(scratch):
-    assert passes.pipeline("default") == ["cfg", "verify", "prove", "refuted", "require_proved", "borrows", "contracts", "drops", "tempdrops", "elide"]  # the default is every registered pass
-    assert passes.pipeline("default,-prove") == ["cfg", "verify", "refuted", "require_proved", "borrows", "contracts", "drops", "tempdrops", "elide"]
+    assert passes.pipeline("default") == ["cfg", "verify", "prove", "refuted", "require_proved", "borrows", "taint", "contracts", "drops", "tempdrops", "elide"]  # the default is every registered pass
+    assert passes.pipeline("default,-prove") == ["cfg", "verify", "refuted", "require_proved", "borrows", "taint", "contracts", "drops", "tempdrops", "elide"]
     assert passes.pipeline("prove,verify") == ["prove", "verify"]
 
     @passes.register
     class Extra(passes.Pass):
         name, kind, after = "extra", "check", ("prove",)
 
-    assert passes.order(passes.pipeline("default")) == ["cfg", "verify", "prove", "refuted", "require_proved", "borrows", "contracts", "drops", "tempdrops", "elide", "extra"]  # a new pass joins the default run
-    assert passes.order(passes.pipeline("default,-extra")) == ["cfg", "verify", "prove", "refuted", "require_proved", "borrows", "contracts", "drops", "tempdrops", "elide"]
+    assert passes.order(passes.pipeline("default")) == ["cfg", "verify", "prove", "refuted", "require_proved", "borrows", "taint", "contracts", "drops", "tempdrops", "elide", "extra"]  # a new pass joins the default run
+    assert passes.order(passes.pipeline("default,-extra")) == ["cfg", "verify", "prove", "refuted", "require_proved", "borrows", "taint", "contracts", "drops", "tempdrops", "elide"]
 
 
 def test_an_invalidated_analysis_is_recomputed_only_for_the_next_user(scratch):

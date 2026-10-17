@@ -565,7 +565,10 @@ path is a place a reviewer sees, and the set is small.
    `bodies.py`; sinks `KIFT001` / `KIFT002` for locals and parameters only. Tests: one per sink, one per propagation rule.
 2. **Calls and places.** Rule 7 (`KIFT003`, `KIFT005`, `KIFT008`) and rule 3 (`KIFT004`), `#[tainted_result]`, struct/field taint. **Done.** Limits: a local carries one taint (no per-field), prelude/builtin methods are not annotated (a tainted receiver or argument gives `KIFT003`), and lambdas are not walked.
 3. **Sanitizers.** `#[untaint]` with checked, pure bodies (`KIFT009`), `#[untaint(trusted)]`, the `ct` intrinsics. **Done:** `KIFT009` is checked (`&mut` parameter, store through a reference or to a static/parameter, `unsafe`, lambdas, any macro but `untaint!`, any call that is not `#[untaint]` or in the `ct::`/`spec::` namespaces) and `#[untaint(trusted)]` bodies are skipped.  The `ct::` intrinsics are typed, tainted-checked, lowered to the IR and interpreted; their C emission is stage 5.
-4. **IR backstop.** The `taint` pass, `check_module` wiring, `--explain-taint`.
+4. **IR backstop.** Done: the `taint` pass (`kiflang/taint_ir.py`) runs by default and in `check_module`, so `kif lint` and the editor show it.
+   `Local.taint` (a `#[tainted]` parameter) and `Call.taint` (`untaint` / `tainted_result`) are new IR fields, serialized, `IR_VERSION` is 2.
+   It reports KIFT001, 002 and 008 with the walker's message format; a test checks it agrees with the walker on the sink corpus.
+   Limits: KIFT003-005 need declared types and stay walker-only; `--explain-taint` is not done yet; `check_module` runs only when the walker found no error, so the pass is a pure backstop and never repeats a walker diagnostic.
 5. **Codegen.** `taint.barrier` and friends in the target schema, barrier emission, a compiled `tests/c` case that keeps a `select`
    branch-free (inspect the generated code in the test, not only its output).
 6. **Barriers.** `spec::barrier` / `spec::value` in the language, `Barrier` in the IR (with `IR_VERSION` bump), implicit barriers for

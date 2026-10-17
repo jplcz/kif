@@ -171,7 +171,7 @@ tree = serial.loads_ast(serial.dumps_ast(mod.tree, as_cbor=True))
 
 ```
 kif ir FILE                          # text listing
-kif ir FILE --format json            # {"format": "kif-ir", "version": 1, "functions": [...], "skipped": [...]}
+kif ir FILE --format json            # {"format": "kif-ir", "version": 2, "functions": [...], "skipped": [...]}
 kif ir FILE --format cbor -o f.cbor  # bytes are never written to a terminal, so -o is required
 kif ir FILE --ast --format json      # the syntax tree: {"format": "kif-ast", "version": 1, "tree": {...}}
 ```

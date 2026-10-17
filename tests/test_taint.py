@@ -405,3 +405,55 @@ def test_signature_help_for_ct_intrinsics():
 def test_taint_attributes_are_known_to_the_editor():
     from kiflang import lsp
     assert {"tainted", "tainted_result", "untaint", "trusted"} <= set(lsp.ATTRIBUTES)
+
+
+# -- stage 4: the IR backstop (kiflang/taint_ir.py)
+
+def ir_codes(src: str):
+    from kiflang import passes
+
+    r = analyze("t.kif", src)
+    return sorted(d.code for d in passes.run_module(r.tree, ["taint"]).diagnostics)
+
+
+def test_ir_reports_branch_index_and_value_call():
+    assert ir_codes(fn("if n > 3 { 1 } else { 0 }")) == ["KIFT001"]
+    assert ir_codes(fn("t[n]")) == ["KIFT002"]
+    assert ir_codes(fn("c / (n as u32)")) == ["KIFT002"]
+    assert ir_codes(fn("c << n")) == ["KIFT002"]
+
+
+def test_ir_clean_cases():
+    assert ir_codes(fn("t[c as usize]")) == []
+    assert ir_codes(fn("(n as u32) + c")) == []
+    assert ir_codes(fn("let m = n & 3; t[m]")) == ["KIFT002"]          # masking is not sanitising: only #[untaint] is
+    assert ir_codes(san("x & 3")) == []
+
+
+def test_ir_flows_through_locals_and_loops():
+    assert ir_codes(fn("let mut i = 0usize; let mut k = n; while i < 3 { k = k + 1; i = i + 1; } t[k]")) == ["KIFT002"]
+    assert ir_codes(fn("let mut k = n; k = 0; t[k]")) == []            # a whole-slot store replaces taint
+
+
+def test_ir_untaint_call_is_clean_and_tainted_result_is_a_source():
+    sanit = "#[untaint]\nfn s(#[tainted] x: usize) -> usize { x & 3 }\n"
+    assert ir_codes(sanit + fn("t[untaint!(\"masked to 0..3\", s(n))]")) == []
+    src = "#[tainted_result]\nfn get() -> usize { 1 }\nfn g(t: &[u32]) -> u32 { t[get()] }\n"
+    assert ir_codes(src) == ["KIFT002"]
+
+
+def test_ir_question_mark_is_allowed():
+    src = "fn h(#[tainted] n: usize) -> result<u32, error> { ok(n as u32) }\n#[tainted_result]\nfn f(#[tainted] n: usize) -> result<u32, error> { let v = h(n)?; ok(v) }\n"
+    assert ir_codes(src) == []
+
+
+def test_ir_agrees_with_the_walker_on_sinks():
+
+    # every snippet the walker flags with KIFT001/002/008 the IR flags too, and nothing the walker passes is flagged
+    snippets = ["if n > 3 { 1 } else { 0 }", "t[n]", "t[n..]", "match n { 0 => 1, _ => 2 }", "c / (n as u32)", "c << n", "n as u32", "t[c as usize]"]
+    for s in snippets:
+        want = sorted(x for x in codes(fn(s)) if x in ("KIFT001", "KIFT002", "KIFT008"))
+        got = ir_codes(fn(s))
+        assert set(want) <= set(got), (s, want, got)
+        if not want:
+            assert got == [], s

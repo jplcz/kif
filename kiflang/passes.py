@@ -276,6 +276,16 @@ class BorrowsPass(Pass):
 
 
 @register
+class TaintPass(Pass):
+    name, kind, requires, summary = "taint", "check", ("cfg",), "the IR backstop of the taint check: tainted data deciding a branch, an index, a divisor, a shift or a call target (KIFT001, 002, 008)"
+
+    def run(self, ctx: Context) -> int:
+        from . import taint_ir
+
+        return taint_ir.check(ctx)
+
+
+@register
 class ContractsPass(Pass):
     name, kind, requires, summary = "contracts", "check", (), "a `#[preserves]` function must not change what it promises to keep (KIFI030)"
 
@@ -326,7 +336,7 @@ PIPELINES: Dict[str, Tuple[str, ...]] = {
 def check_module(tree) -> List[dg.Diagnostic]:
     """What the IR check passes (`kind == "check"` and cheap: `refuted`) say about a module that compiles: the diagnostics `kif lint` and the
     editor show next to the checker's. A function the IR builder cannot handle has none."""
-    return run_module(tree, ["refuted", "require_proved", "borrows", "contracts"]).diagnostics
+    return run_module(tree, ["refuted", "require_proved", "borrows", "contracts", "taint"]).diagnostics
 
 
 def named_pipeline(name: str) -> Optional[List[str]]:
