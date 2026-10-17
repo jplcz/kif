@@ -193,6 +193,41 @@ class _Flow:
                 self.block(b, dict(ins[b.id]), True)
 
 
+class Note(NamedTuple):
+    line: int   # 1-based
+    col: int    # 1-based
+    kind: str   # source | barrier | untaint
+    text: str
+    function: str
+
+
+def explain(fn: ir.Function) -> List[Note]:
+    """What the taint feature did in one function, in source order, for `kif ir --explain-taint` and the editor: the tainted sources,
+    every speculation barrier (written or inserted, with the reason) and every `untaint!` reason. Run it on the IR the `barriers`
+    pass has been over."""
+    out: List[Note] = []
+
+    def at(site) -> Tuple[int, int]:
+        r = getattr(site, "range", None)
+        return (r.start.line + 1, r.start.col + 1) if r is not None else (0, 0)
+
+    if fn.node is not None:
+        for p in fn.params:
+            if p.taint:
+                q = next((x for x in fn.node.params if not x.receiver and x.name.text == p.name), None)
+                out.append(Note(*at(q.name if q is not None else fn.node), "source", f"parameter {p.name!r} is tainted", fn.name))
+    for _, i in fn.instrs():
+        if isinstance(i, ir.Barrier):
+            kind = "value barrier" if i.kind == "value" else "fence"
+            out.append(Note(*at(i.site), "barrier", f"{kind} ({'implicit: ' + i.why if i.why else 'explicit: spec::' + ('value' if i.kind == 'value' else 'barrier') + '()'})", fn.name))
+        elif isinstance(i, ir.Call):
+            if i.taint == "tainted_result":
+                out.append(Note(*at(i.site), "source", f"result of {i.callee}() is tainted", fn.name))
+            if i.reason:
+                out.append(Note(*at(i.site), "untaint", f"{i.callee}(): {i.reason}", fn.name))
+    return sorted(out, key=lambda n: (n.line, n.col, n.kind))
+
+
 def _is_barrier(i, kind: str) -> bool:
     return isinstance(i, ir.Barrier) and i.kind == kind and bool(i.why)
 

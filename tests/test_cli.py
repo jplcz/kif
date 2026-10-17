@@ -278,3 +278,15 @@ def test_ir_explain_checks_lists_proved_and_kept_checks(tmp_path):
     r = kif("ir", str(p), "--no-project", "--explain-checks")
     assert r.returncode == 0, r.stderr
     assert "index check proved: constant index 2 < 4" in r.stdout and "index check kept" in r.stdout
+
+
+def test_ir_explain_taint_lists_sources_barriers_and_untaint_reasons(tmp_path):
+    f = tmp_path / "t.kif"
+    f.write_text('#[untaint]\nfn s(#[tainted] x: usize) -> usize { x & 3 }\n#[tainted_result]\nfn get() -> usize { 1 }\n'
+                 '#[tainted_result]\nfn g(#[tainted] t: &[u32], c: usize) -> u32 {\n    spec::barrier();\n    let k = untaint!("masked to 0..3", s(get()));\n    t[c] + t[k]\n}\n')
+    r = kif("ir", str(f), "--explain-taint")
+    assert r.returncode == 0, r.stderr
+    out = r.stdout
+    assert "source: parameter 't' is tainted [g]" in out and "barrier: fence (explicit: spec::barrier())" in out
+    assert "untaint: s(): masked to 0..3" in out and "source: result of get() is tainted" in out
+    assert out.count("implicit: tainted element load") == 2

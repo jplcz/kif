@@ -134,7 +134,7 @@ def cmd_ir(args: argparse.Namespace) -> int:
         print("kif ir: give a FILE (or --list-passes)", file=sys.stderr)
         return 2
     try:
-        names = passmgr.pipeline(args.passes) if args.passes else (["prove"] if args.prove else [])
+        names = passmgr.pipeline(args.passes) if args.passes else passmgr.pipeline("default") if args.explain_taint else (["prove"] if args.prove else [])
         passmgr.order(names)
     except passmgr.PassError as e:
         print(f"kif ir: {e}", file=sys.stderr)
@@ -174,7 +174,11 @@ def cmd_ir(args: argparse.Namespace) -> int:
                 print(f"kif ir: pass {n}: {sec * 1000:.1f} ms over {len(ran.functions)} functions", file=sys.stderr)
         if any(d.severity == ERROR for d in found):
             return 1
-        if args.explain_checks:
+        if args.explain_taint:
+            from . import taint_ir
+
+            out = "".join(f"{args.file}:{n.line}:{n.col}: {n.kind}: {n.text} [{n.function}]\n" for f in built.functions for n in taint_ir.explain(f))
+        elif args.explain_checks:
             from . import hints
 
             out = "".join(f"{args.file}:{h.line + 1}:{h.col + 1}: {h.kind} check {'proved: ' + h.why if h.proved else 'kept'}\n"
@@ -472,6 +476,7 @@ def make_parser() -> "tuple":
     ir_.add_argument("--passes", metavar="LIST", help="run these IR passes first: a pipeline (default = every pass, verify, prove) or pass names, in order; `-name` removes one, e.g. default,-prove,mypass (docs/kif-ir-passes.md)")
     ir_.add_argument("--list-passes", action="store_true", help="list the IR passes and exit")
     ir_.add_argument("--explain-checks", action="store_true", help="list every run-time check of the file as proved (with the proof) or kept (docs/kif-ir-passes.md)")
+    ir_.add_argument("--explain-taint", action="store_true", help="list the taint sources, every speculation barrier (written or inserted, with its reason) and every untaint! reason (docs/kif-taint.md)")
     ir_.add_argument("--coverage", action="store_true", help="report which functions the IR describes completely enough to emit code from (docs/kif-ir-codegen.md)")
     ir_.add_argument("--stats", action="store_true", help="print the time each pass took")
     ir_.add_argument("-o", "--output", metavar="FILE", help="write here instead of standard output (required for cbor)")

@@ -568,7 +568,7 @@ path is a place a reviewer sees, and the set is small.
 4. **IR backstop.** Done: the `taint` pass (`kiflang/taint_ir.py`) runs by default and in `check_module`, so `kif lint` and the editor show it.
    `Local.taint` (a `#[tainted]` parameter) and `Call.taint` (`untaint` / `tainted_result`) are new IR fields, serialized, `IR_VERSION` is 2.
    It reports KIFT001, 002 and 008 with the walker's message format; a test checks it agrees with the walker on the sink corpus.
-   Limits: KIFT003-005 need declared types and stay walker-only; `--explain-taint` is not done yet; `check_module` runs only when the walker found no error, so the pass is a pure backstop and never repeats a walker diagnostic.
+   Limits: KIFT003-005 need declared types and stay walker-only; `kif ir FILE --explain-taint` lists, in source order, the tainted sources, every barrier (explicit or implicit, with the reason) and every `untaint!` reason (`taint_ir.explain`, also what the editor will show in stage 7); `check_module` runs only when the walker found no error, so the pass is a pure backstop and never repeats a walker diagnostic.
 5. **Codegen.** Done for the `ct::` intrinsics: the `taint` target section (`barrier`, `nospec`, `fence`, validated placeholders; `c` sets `barrier`),
    branch-free C for `select`/`eq`/`lt`/`mask`/`clamp` on the unsigned type of the same width (signed order by flipping the top bit), the
    barrier after each result, an audit comment before it, and a `LowerError` naming `taint.barrier` when the target has none. Tests compile
