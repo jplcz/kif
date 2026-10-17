@@ -159,3 +159,17 @@ def test_a_value_read_through_an_array_alias_is_wiped_after_the_read():
 def test_a_kept_reference_wipes_at_scope_exit():
     t = wiped("fn g(r: &[u8; 4]) -> u8 { r[0] }\nfn f() -> u8 { #[secure_wipe] let buf: [u8; 4] = [1; 4]; let r: &[u8; 4] = &buf; g(r) }")
     assert wipe_lines(t) and t.index("call g") < t.index("wipe %buf")
+
+
+def test_secure_wipe_argument_is_only_volatile():
+    assert codes("fn f() { #[secure_wipe(volatile)] let a: u32 = 1; }") == []
+    assert codes("#[secure_wipe(volatile)] fn f() { let a: u32 = 1; }") == []
+    assert codes("fn f() { #[secure_wipe(fast)] let a: u32 = 1; }") == ["KIFW004"]
+    assert codes("fn f() { #[secure_wipe(volatile, volatile)] let a: u32 = 1; }") == ["KIFW004"]
+
+
+def test_volatile_reaches_the_wipe_instruction():
+    t = wiped("fn f() -> u32 { #[secure_wipe(volatile)] let a: u32 = 1; a }")
+    assert "wipe %a volatile" in t
+    assert "volatile" not in wiped("fn f() -> u32 { #[secure_wipe] let a: u32 = 1; a }")
+    assert "wipe %a volatile" in wiped("#[secure_wipe(volatile)] fn f() -> u32 { let a: u32 = 1; a }")

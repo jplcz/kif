@@ -190,6 +190,7 @@ class Lowerer:
         self.fixed_name: Dict[int, str] = {}
         self.cur_owner: Optional[str] = None  # what `Self` means in the code being lowered
         self.uses_errno = False
+        self.uses_wipe_volatile = False  # a `volatile` wipe is emitted: the volatile macro is defined too
         self.uses_wipe = False  # a secure wipe is emitted: the target's wipe macro and header are defined in the header
         self.cast_enums: Set[str] = set()
         self.label = 0
@@ -1445,6 +1446,9 @@ static __inline void {P}_drop({V} *v)
         if plan.error:
             raise LowerError(f"KIFW006: target {self.t.name!r} cannot wipe, but struct {n} is #[secure_wipe]: {plan.error}")
         self.uses_wipe = True
+        vol = any(a.name.text == "secure_wipe" and any(x.name == "volatile" for x in a.args or []) for a in sd.attrs)
+        self.uses_wipe_volatile |= vol
+        suffix = "_VOLATILE" if vol else ""
         out = []
         for f in sd.fields:
             if any(a.name.text == "wipe_exempt" for a in f.attrs):
@@ -1455,7 +1459,7 @@ static __inline void {P}_drop({V} *v)
                 out.append(f"	/* kif: secure wipe: {n}.{f.name.text} ({f.ty.text}), by its own generated drop ({self.file}:{f.name.range.start.line + 1}) */")
                 out.append(f"	{f.ty.text}_drop(&{nm});")
                 continue
-            out.append(f"	/* kif: secure wipe: {n}.{f.name.text} ({ir.type_text(f.ty)}), generated drop of #[secure_wipe] struct {n} ({self.file}:{f.name.range.start.line + 1}) */")
+            out.append(f"	/* kif: secure wipe{" (volatile)" if vol else ""}: {n}.{f.name.text} ({ir.type_text(f.ty)}), generated drop of #[secure_wipe] struct {n} ({self.file}:{f.name.range.start.line + 1}) */")
             out.append(f"	{plan.macro}(&{nm}, sizeof({nm}));")
         return out
 
@@ -2000,6 +2004,8 @@ static __inline void kif_str_drop(struct kif_str *s)
         head += [f"#include {i}" for i in incs] + ['#include "kif_c.h"'] + [f"#include {i}" for i in self.includes]
         if self.uses_wipe:
             head += ["", f"#ifndef {wipe.macro}", f"#define {wipe.macro}(p, n) do {{ {wipe.body}; }} while (0)", "#endif", ""]
+            if self.uses_wipe_volatile:
+                head += [f"#ifndef {wipe.macro}_VOLATILE", f"#define {wipe.macro}_VOLATILE(p, n) do {{ {wipe.volatile_body}; }} while (0)", "#endif", ""]
         if self.uses_str and not (self.t.get("alloc.realloc") and self.t.get("alloc.free")):
             raise LowerError(f"target {self.t.name!r} has no alloc.realloc/alloc.free, so str cannot be lowered")
         if self.uses_str:

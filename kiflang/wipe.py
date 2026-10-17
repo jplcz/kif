@@ -28,6 +28,20 @@ def _attr(attrs, name: str):
     return next((a for a in attrs if a.name.text == name), None)
 
 
+def is_volatile(attrs) -> bool:
+    """`#[secure_wipe(volatile)]`: the wipe goes through the target's volatile primitive (rule W2)."""
+    a = _attr(attrs, "secure_wipe")
+    return a is not None and any(x.name == "volatile" for x in a.args or [])
+
+
+def check_args(bc, a) -> None:
+    """The only argument `#[secure_wipe]` takes is `volatile`."""
+    if a is None or a.raw is None and not a.args:
+        return
+    if a.args is None or len(a.args) > 1 or any(x.name != "volatile" or x.args or x.value is not None for x in a.args):
+        bc.d.append(dg.error(a.range, "KIFW004", "#[secure_wipe] takes no argument but `volatile`"))
+
+
 def is_secure_struct(sym) -> bool:
     return sym is not None and sym.kind == "struct" and _attr(sym.node.attrs, "secure_wipe") is not None
 
@@ -85,6 +99,7 @@ def check_struct(bc, it: ast.StructDecl) -> None:
     if sym is None or sym.node is not it:
         return
     secure = _attr(it.attrs, "secure_wipe") is not None
+    check_args(bc, _attr(it.attrs, "secure_wipe"))
     if secure:
         ty = Ty(it.name.text, key=f"{sym.module.key}:{it.name.text}", cat="adt", sym=sym)
         if bc.index.get(ty.key, {}).get("drop") is not None:
@@ -125,8 +140,10 @@ def check_item_attrs(bc, it) -> None:
 
 def check_fn(bc, f: ast.FnDecl) -> None:
     secure_fn = _attr(f.attrs, "secure_wipe") is not None
+    check_args(bc, _attr(f.attrs, "secure_wipe"))
     for p in f.params:
         sw, ex = _attr(p.attrs, "secure_wipe"), _attr(p.attrs, "wipe_exempt")
+        check_args(bc, sw)
         if ex is not None:
             bc.d.append(dg.error(ex.range, "KIFW004", "#[wipe_exempt] on a parameter: a function-level #[secure_wipe] never wipes parameters"))
         if sw is None:
@@ -145,6 +162,7 @@ def check_fn(bc, f: ast.FnDecl) -> None:
 
 def check_let(bc, s: ast.Let, var_ty: Ty) -> None:
     sw, ex = _attr(s.attrs, "secure_wipe"), _attr(s.attrs, "wipe_exempt")
+    check_args(bc, sw)
     in_secure_fn = bc.cur is not None and M.has_attr(getattr(bc.cur, "attrs", []), "secure_wipe")
     if ex is not None and not in_secure_fn:
         bc.d.append(dg.error(ex.range, "KIFW004", f"#[wipe_exempt] on {s.name.text!r}: the enclosing function is not #[secure_wipe]"))

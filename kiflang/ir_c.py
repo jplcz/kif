@@ -937,10 +937,11 @@ class _Emit:
         if w.local in self.fn.params and self.arr_elem(w.local.type):
             raise LowerError(f"KIFW006: {w.local.name!r} is an array parameter, which C passes as a pointer: its storage is the caller's, so it cannot be wiped here")
         lw.uses_wipe = True
+        lw.uses_wipe_volatile |= w.volatile
         line = w.site.range.start.line + 1 if w.site is not None else 0
         what = self.names[w.local] + w.path
-        self.put(f"/* kif: secure wipe: {what} ({w.ty}), {w.why.replace('*/', '* /')} ({lw.file}:{line or '?'}) */")
-        self.put(f"{plan.macro}(&{what}, sizeof({what}));")
+        self.put(f"/* kif: secure wipe{' (volatile)' if w.volatile else ''}: {what} ({w.ty}), {w.why.replace('*/', '* /')} ({lw.file}:{line or '?'}) */")
+        self.put(f"{plan.macro}{'_VOLATILE' if w.volatile else ''}(&{what}, sizeof({what}));")
 
     def barrier(self, b: ir.Barrier) -> None:
         """A speculation barrier as the target's `taint.fence` / `taint.barrier` snippet, always preceded by an audit comment saying

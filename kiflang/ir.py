@@ -31,6 +31,7 @@ from typing import Dict, Iterator, List, Optional, Set, Tuple, Union
 
 from . import ast
 from . import facts
+from . import wipe as wipe_mod
 from . import types as T
 from .irtypes import Type, parse_type, ty_text
 from .types import Ty
@@ -60,6 +61,7 @@ class Local:
     owns: bool = False  # the slot holds a value with drop glue (a vector, a string, a struct with a `drop` or an owning field): see Dead.drop
     taint: bool = False  # a `#[tainted]` parameter: the slot starts out holding untrusted data (docs/kif-taint.md); read by the `taint` pass
     wipe: bool = False  # a secure variable (`#[secure_wipe]`, or a plain local of a `#[secure_wipe]` function): the `wipes` pass wipes it (docs/kif-secure-wipe.md)
+    wipe_volatile: bool = False  # `#[secure_wipe(volatile)]`: the wipe uses the target's volatile primitive
 
     @cached_property
     def type(self) -> Type:
@@ -949,6 +951,7 @@ class _Builder:
                 loc = self.local(p.name.text, type_text(p.ty), False, True, _array_length(p.ty))
                 loc.taint = getattr(f, "taint_all", False) or any(a.name.text == "tainted" for a in getattr(p, "attrs", []))
             loc.wipe = any(a.name.text == "secure_wipe" for a in getattr(p, "attrs", []))
+            loc.wipe_volatile = loc.wipe and wipe_mod.is_volatile(p.attrs)
             self.fn.params.append(loc)
             self.scopes[-1][loc.name] = loc
             if loc.owns:
@@ -1093,6 +1096,7 @@ class _Builder:
             loc = self.local(s.name.text, type_text(s.ty) if s.ty is not None else self.tys(s.init), s.mut, False, _array_length(s.ty))
             names = [a.name.text for a in s.attrs]
             loc.wipe = "secure_wipe" in names or ("secure_wipe" in self.fn.attrs and "wipe_exempt" not in names and plain_type(loc.type))
+            loc.wipe_volatile = loc.wipe and wipe_mod.is_volatile(s.attrs if "secure_wipe" in names else self.decl.attrs)
             self.declare(loc, self.expr(s.init) if s.init is not None else None, s)
         elif isinstance(s, ast.LetPat):
             if s.init is not None:

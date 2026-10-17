@@ -58,7 +58,7 @@ def _term_uses(b: ir.Block, d: Set[ir.Temp]) -> bool:
 
 
 def _wipe(loc: ir.Local, why: str, site=None) -> ir.Wipe:
-    return ir.Wipe(loc, "", loc.ty, False, f"{why} of {loc.name!r}", site=site)
+    return ir.Wipe(loc, "", loc.ty, loc.wipe_volatile, f"{why} of {loc.name!r}", site=site)
 
 
 def analyze(fn: ir.Function, cfg: ir.CFG) -> int:

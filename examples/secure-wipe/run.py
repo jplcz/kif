@@ -68,7 +68,7 @@ def run(target_name: str = "c") -> dict:
         result["output"] = r.stdout
     result["expected"] = (HERE / "demo.out").read_text()
     result["wipes_in_ir"] = (out / "demo.ir").read_text().count("wipe %")
-    result["wipes_in_c"] = sum(f.read_text().count(p.macro + "(&") for f in [*out.glob("*_proc.c"), *out.glob("*_proc.h")])
+    result["wipes_in_c"] = sum(f.read_text().count(p.macro + "(&") + f.read_text().count(p.macro + "_VOLATILE(&") for f in [*out.glob("*_proc.c"), *out.glob("*_proc.h")])
     return result
 
 

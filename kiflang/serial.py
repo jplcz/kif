@@ -163,7 +163,7 @@ def _function(fn: ir.Function) -> Dict[str, Any]:
                 temps[t.id] = t
     return {
         "name": fn.name, "ret": fn.ret, "attrs": list(fn.attrs), "params": [p.id for p in fn.params],
-        "locals": [{"id": x.id, "name": x.name, "ty": x.ty, "mut": x.mut, "param": x.param, "length": x.length, "owns": x.owns, "taint": x.taint, "wipe": x.wipe} for x in fn.locals],
+        "locals": [{"id": x.id, "name": x.name, "ty": x.ty, "mut": x.mut, "param": x.param, "length": x.length, "owns": x.owns, "taint": x.taint, "wipe": x.wipe, "wipe_volatile": x.wipe_volatile} for x in fn.locals],
         "temps": [{"id": k, "ty": v.ty, **({"owns": True} if v.owns else {})} for k, v in temps.items()],
         "blocks": [{"id": b.id, "label": b.label, "instrs": [_item(i) for i in b.instrs], "term": _item(b.term) if b.term else None}
                    for b in fn.blocks],
@@ -247,7 +247,7 @@ class _Reader:
         name = self.need(d, "name", str, what)
         for x in self.need(d, "locals", list, what):
             loc = ir.Local(self.need(x, "id", int, what), self.need(x, "name", str, what), self.need(x, "ty", str, what),
-                           bool(x.get("mut", True)), bool(x.get("param", False)), self.opt(x, "length", int, what), bool(x.get("owns", False)), bool(x.get("taint", False)), bool(x.get("wipe", False)))
+                           bool(x.get("mut", True)), bool(x.get("param", False)), self.opt(x, "length", int, what), bool(x.get("owns", False)), bool(x.get("taint", False)), bool(x.get("wipe", False)), bool(x.get("wipe_volatile", False)))
             self.locals[loc.id] = loc
         for t in self.need(d, "temps", list, what):
             tid = self.need(t, "id", int, what)
