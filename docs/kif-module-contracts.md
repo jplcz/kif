@@ -69,6 +69,8 @@ security = {
       "trusted": false,                              # #[trusted] on an #[export] function
       "contracts": ["len_ge(4)@buf", "lt_len(buf)@i", "ensures(non_null)", "preserves(out)"],
       "unsafe": false,
+      "secure_wipe": false,                          # the function carries #[secure_wipe] (derived; checked against the declaration)
+      "wipes": 0,                                    # informational: wipe sites in the compiled body
       "barriers": { "explicit": 1, "implicit": 2 },  # counts in the compiled body; the sites stay in the vendor's report
       "kept_checks": ["index"],                      # check kinds the compiled body still performs; [] means fully proved
       "proved": ["div", "shift"],                    # check kinds the vendor's prover discharged
@@ -76,8 +78,8 @@ security = {
     },
     "Ring::push": { ... }                            # methods are keyed `Type::name`
   },
-  "types": {                                         # taint carried by type declarations
-    "packet": { "tainted": true, "tainted_fields": ["payload"] }
+  "types": {                                         # taint and secure-wipe facts carried by type declarations
+    "packet": { "tainted": true, "tainted_fields": ["payload"], "secure_wipe": false, "wipe_exempt": [] }
   }
 }
 ```

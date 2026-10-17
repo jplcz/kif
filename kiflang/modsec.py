@@ -23,8 +23,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from . import ast, manifest
 
 SCHEMA = 1
-DERIVED = ("export", "tainted_params", "tainted_result", "untaint", "trusted", "contracts", "unsafe")
-INFORMATIONAL = ("barriers", "kept_checks", "proved", "ir_hash")
+DERIVED = ("export", "tainted_params", "tainted_result", "untaint", "trusted", "contracts", "unsafe", "secure_wipe")
+INFORMATIONAL = ("barriers", "kept_checks", "proved", "ir_hash", "wipes")
 UNKNOWN = "unknown"
 _FACT_ATTRS = ("some", "non_null", "non_empty", "len_ge", "lt_len")
 _FN_FACT_ATTRS = ("ensures", "preserves", "when", "len_of", "unchecked_form")
@@ -67,6 +67,7 @@ def _entry(f, exports_all: bool) -> Dict[str, Any]:
         "trusted": trusted,
         "contracts": [t for _, _, t in sorted(facts)],
         "unsafe": _has(attrs, "unsafe"),
+        "secure_wipe": _has(attrs, "secure_wipe"),
     }
 
 
@@ -136,10 +137,12 @@ def declared(tree, exports_all: bool) -> Tuple[Dict[str, Dict[str, Any]], Dict[s
     for it in tree.items:
         if isinstance(it, ast.StructDecl):
             fields = [f.name.text for f in it.fields if _has(f.attrs, "tainted")]
-            if _has(it.attrs, "tainted") or fields:
-                types[it.name.text] = {"tainted": _has(it.attrs, "tainted"), "tainted_fields": fields}
+            secure = _has(it.attrs, "secure_wipe")
+            if _has(it.attrs, "tainted") or fields or secure:
+                types[it.name.text] = {"tainted": _has(it.attrs, "tainted"), "tainted_fields": fields, "secure_wipe": secure,
+                                       "wipe_exempt": [f.name.text for f in it.fields if _has(f.attrs, "wipe_exempt")]}
         elif isinstance(it, ast.EnumDecl) and _has(it.attrs, "tainted"):
-            types[it.name.text] = {"tainted": True, "tainted_fields": []}
+            types[it.name.text] = {"tainted": True, "tainted_fields": [], "secure_wipe": False, "wipe_exempt": []}
     return fns, types
 
 
@@ -165,7 +168,8 @@ def _analysis(tree) -> Dict[int, Dict[str, Any]]:
         for c in f.elided:
             if not (c.tag and not c.call):
                 (proved if c.proof is not None else kept).add(c.kind)
-        out[id(f.node)] = {"barriers": {"explicit": explicit, "implicit": implicit}, "kept_checks": sorted(kept), "proved": sorted(proved - kept),
+        wipes = sum(isinstance(i, ir.Wipe) for _, i in f.instrs())
+        out[id(f.node)] = {"wipes": wipes, "barriers": {"explicit": explicit, "implicit": implicit}, "kept_checks": sorted(kept), "proved": sorted(proved - kept),
                        "ir_hash": raw.get(id(f.node))}
     return out
 
@@ -181,7 +185,7 @@ def build(mod, target_name: str, profile_name: str, language: str) -> Dict[str, 
     for name, entry in fns.items():
         if entry.get("embedded"):
             continue
-        entry.update(info.get(id(decls[name]), {"barriers": None, "kept_checks": UNKNOWN, "proved": UNKNOWN, "ir_hash": None}))
+        entry.update(info.get(id(decls[name]), {"wipes": None, "barriers": None, "kept_checks": UNKNOWN, "proved": UNKNOWN, "ir_hash": None}))
     return {
         "target": target_name, "profile": profile_name, "language": language,
         "taint": {"exports": "all" if exports_all else "declared", "sinks": sorted(sinks)},
@@ -214,7 +218,7 @@ def validate(sec: Any) -> None:
             raise ValueError(f"security.functions[{name!r}] must be a map")
         if e.get("embedded") is True:
             continue
-        for k, kind in (("export", bool), ("tainted_params", list), ("tainted_result", bool), ("trusted", bool), ("contracts", list), ("unsafe", bool)):
+        for k, kind in (("export", bool), ("tainted_params", list), ("tainted_result", bool), ("trusted", bool), ("contracts", list), ("unsafe", bool), ("secure_wipe", bool)):
             need(e, k, kind, f"security.functions[{name!r}].")
         if e.get("untaint") not in (None, "checked", "trusted"):
             raise ValueError(f"security.functions[{name!r}].'untaint' must be null, 'checked' or 'trusted'")
@@ -224,6 +228,8 @@ def validate(sec: Any) -> None:
     for name, t in need(sec, "types", dict, "security.").items():
         need(t, "tainted", bool, f"security.types[{name!r}].")
         need(t, "tainted_fields", list, f"security.types[{name!r}].")
+        need(t, "secure_wipe", bool, f"security.types[{name!r}].")
+        need(t, "wipe_exempt", list, f"security.types[{name!r}].")
 
 
 def check(tree, sec: Dict[str, Any]) -> List[str]:
@@ -244,7 +250,7 @@ def check(tree, sec: Dict[str, Any]) -> List[str]:
                 if have[name].get(k) != fns[name][k]:
                     out.append(f"security.{name}.{k} is {have[name].get(k)!r} but the declarations say {fns[name][k]!r}")
     if sec["types"] != types:
-        out.append("security.types does not match the tainted types and fields the declarations carry")
+        out.append("security.types does not match the tainted and secure types and fields the declarations carry")
     return out
 
 

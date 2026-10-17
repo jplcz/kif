@@ -85,7 +85,10 @@ def test_section_records_the_effective_contracts():
     assert fns["first"]["contracts"] == ["len_ge(1)@a"]
     assert fns["id"] == {"embedded": True}
     assert "ring::len" in fns
-    assert s["types"] == {"packet": {"tainted": True, "tainted_fields": []}, "frame": {"tainted": False, "tainted_fields": ["raw"]}}
+    assert s["types"] == {
+        "packet": {"tainted": True, "tainted_fields": [], "secure_wipe": False, "wipe_exempt": []},
+        "frame": {"tainted": False, "tainted_fields": ["raw"], "secure_wipe": False, "wipe_exempt": []},
+    }
 
 
 def test_exports_policy_makes_exports_tainted_in_the_section():
@@ -342,3 +345,10 @@ def test_taint_report_labels_vendor_evidence(root):
     assert "sanitizer clean (from ddk.kif, vendor-checked)" in text
     assert "sanitizer vouched (from ddk.kif, vendor-trusted)" in text
     assert "#[trusted] export open (from ddk.kif)" in text and "tainted result read_packet (from ddk.kif)" in text
+
+
+def test_section_records_secure_wipe_facts():
+    src = "#[secure_wipe] struct node { v: u32 }\n#[secure_wipe] struct key { k: [u8; 4], #[wipe_exempt] n: ptr<node> }\n#[export] #[secure_wipe] fn f(x: u32) -> u32 { return x; }\n"
+    s = section(src)
+    assert s["types"]["key"]["secure_wipe"] is True and s["types"]["key"]["wipe_exempt"] == ["n"]
+    assert s["functions"]["f"]["secure_wipe"] is True
