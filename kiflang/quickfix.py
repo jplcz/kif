@@ -269,6 +269,69 @@ def _make_mut(ctx: Context, d: Diagnostic) -> List[Fix]:
     return [Fix(f"Declare '{name}' with 'let mut'", [_insert(let.name.range.start, "mut ")], "KIFP020", preferred=True)]
 
 
+# ---------------------------------------------------------------- taint diagnostics (docs/kif-taint.md)
+# None of these is `preferred` or `auto`: each one decides what is trusted at a security boundary, so `kif fix` never applies them.
+
+
+def _taint_decl(ctx: Context, cls, name: str):
+    found = [n for n in walk(ctx.mod.tree.items) if isinstance(n, cls) and n.name.text == name]
+    return found[0] if len(found) == 1 else None
+
+
+def _mark_above(ctx: Context, node, attr: str, title: str, code: str) -> List[Fix]:
+    ln = decl_line(ctx.lines, node)
+    return [Fix(title, [_insert(Pos(ln, 0), f"{ctx.indent_of(ln)}{attr}\n")], code)]
+
+
+@fixer("KIFT005")
+def _taint_return(ctx: Context, d: Diagnostic) -> List[Fix]:
+    m = re.search(r"returned from (\w+)\(\)", d.message)
+    f = _taint_decl(ctx, ast.FnDecl, m.group(1)) if m else None
+    if f is None or has_attr(f.attrs, "tainted_result"):
+        return []
+    return _mark_above(ctx, f, "#[tainted_result]", f"Mark '{f.name.text}' #[tainted_result] (its callers then receive tainted data)", "KIFT005")
+
+
+@fixer("KIFT003")
+def _taint_param(ctx: Context, d: Diagnostic) -> List[Fix]:
+    m = re.search(r"parameter '(\w+)' of (\w+)\(\)", d.message)
+    f = _taint_decl(ctx, ast.FnDecl, m.group(2)) if m else None
+    p = next((x for x in f.params if x.name.text == m.group(1)), None) if f is not None else None
+    if p is None:
+        return []
+    return [Fix(f"Mark parameter '{p.name.text}' of '{f.name.text}' #[tainted] (its body is then checked for tainted input)",
+                [_insert(p.name.range.start, "#[tainted] ")], "KIFT003")]
+
+
+@fixer("KIFT004")
+def _taint_store(ctx: Context, d: Diagnostic) -> List[Fix]:
+    m = re.search(r"the struct (\w+) is not tainted", d.message)
+    if m:
+        st = _taint_decl(ctx, ast.StructDecl, m.group(1))
+        if st is not None:
+            return _mark_above(ctx, st, "#[tainted]", f"Mark struct '{st.name.text}' #[tainted] (taints every field of every value)", "KIFT004")
+    m = re.search(r"the static '(\w+)'", d.message)
+    if m:
+        sd = _taint_decl(ctx, ast.StaticDecl, m.group(1))
+        if sd is not None:
+            return _mark_above(ctx, sd, "#[tainted]", f"Mark static '{sd.name.text}' #[tainted]", "KIFT004")
+    return []
+
+
+@fixer("KIFT001", "KIFT002", "KIFT010")
+def _taint_sanitize(ctx: Context, d: Diagnostic) -> List[Fix]:
+    """Wrap the offending expression in a one-argument `#[untaint]` function of this module, with a reason to be filled in."""
+    out: List[Fix] = []
+    text = ctx.at(d.range)
+    if d.code == "KIFT010":
+        return [Fix("Add the reason: untaint!(\"TODO: justify\", ...)", [Edit(d.range, f'untaint!("TODO: justify", {text})')], "KIFT010")]
+    for f in walk(ctx.mod.tree.items):
+        if isinstance(f, ast.FnDecl) and has_attr(f.attrs, "untaint") and len(f.params) == 1 and f.body is not None:
+            out.append(Fix(f"Sanitize with {f.name.text}() (write the reason in the TODO)",
+                           [Edit(d.range, f'untaint!("TODO: justify", {f.name.text}({text}))')], d.code))
+    return out[:3]
+
+
 # ---------------------------------------------------------------- lint diagnostics
 
 

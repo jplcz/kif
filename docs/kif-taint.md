@@ -426,7 +426,8 @@ docs/kif-ir-passes.md): deterministic, cacheable, parallel.
 
 - **Flow trail.** Put the cursor on a tainted local or parameter and the editor's document highlight marks the whole trail: the variable,
   every tainted variable it was computed from (`let a = n + 1`, `a = n`) and every one computed from it, with all their reads. The hover
-  lists the same chain in flow order (``n` → `a` → `b``). Untainted variables, and tainted ones that never met this one, stay unmarked.
+  lists the same chain in flow order (``n` → `a` → `b``). The sinks the trail reaches (the `KIFT00x` diagnostics on a use of a trail variable) are marked too, with a
+  distinct highlight kind, and the hover adds `Reaches KIFT002 at line N`. Untainted variables, and tainted ones that never met this one, stay unmarked.
 
   Other editors: map the `tainted` token modifier of the `variable` type (`@lsp.mod.tainted` in Neovim).
 - `kif ir FILE --taint-report` is the audit for a security review, one text page per file: the sanitizers (`#[untaint]`, trusted ones

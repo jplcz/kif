@@ -153,6 +153,14 @@ introduces a new error is reverted and its fixes are skipped. Overlapping edits 
 | KIFL005 | doc stub | no |
 | KIFL030 | remove the function | no |
 | every KIFLnnn | suppression comment (declaration or file) | no |
+| KIFT005 | mark the function `#[tainted_result]` (callers then get tainted data) | no |
+| KIFT003 | mark the callee's parameter `#[tainted]` (same module only) | no |
+| KIFT004 | mark the destination struct or static `#[tainted]` (taints the whole struct) | no |
+| KIFT001, KIFT002 | wrap the expression in `untaint!("TODO: justify", clean(..))` for each one-argument `#[untaint]` function of the module (at most 3) | no |
+| KIFT010 | add the missing reason: `untaint!("TODO: justify", ..)` | no |
+
+The KIFT fixes decide what is trusted at a security boundary, so none is `auto` or `preferred`: `kif fix` never applies them and the
+editor offers them only as a lightbulb action. The `TODO: justify` reason is a placeholder for you to write the real one (see docs/kif-taint.md).
 
 ```python
 from kiflang import quickfix

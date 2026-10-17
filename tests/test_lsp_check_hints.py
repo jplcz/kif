@@ -229,3 +229,14 @@ def test_flow_trail_connects_a_tainted_variable_with_everything_it_came_from_and
     value = at("textDocument/hover", 1, "a =")["contents"]["value"]
     assert "`n` → `a` → `b`" in value, value
     assert "`c`" not in value and "`d`" not in value
+
+
+def test_flow_trail_includes_the_sinks_the_tainted_data_reaches():
+    src = "fn f(#[tainted] n: usize, t: &[u32]) -> u32 {\n    let a = n + 1;\n    t[a]\n}\n"
+    r = Rig("off")
+    r.open(src)
+    col = src.split("\n")[1].index("a =")
+    out = r.s.handle({"id": 9, "method": "textDocument/documentHighlight", "params": {"textDocument": {"uri": r.uri}, "position": {"line": 1, "character": col}}})
+    assert any(h["kind"] == 3 and h["range"]["start"]["line"] == 2 for h in out[0]["result"]), out
+    out = r.s.handle({"id": 9, "method": "textDocument/hover", "params": {"textDocument": {"uri": r.uri}, "position": {"line": 1, "character": col}}})
+    assert "**Reaches** `KIFT002` at line 3" in out[0]["result"]["contents"]["value"], out

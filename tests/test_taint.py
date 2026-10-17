@@ -667,3 +667,36 @@ def test_the_summary_does_not_hide_a_tainted_result_declaration_or_a_bodyless_ca
     assert codes(SUMMARY.replace("fn pick", "#[tainted_result]\nfn pick") + "fn g(t: &[u32]) -> u32 { let x = raw(); t[pick(x, 1) as usize] }") == ["KIFT002"]
     ext = 'extern "C" { fn probe(#[tainted] a: u32, b: u32) -> u32; }\n'
     assert "KIFT002" in codes(ext + "#[tainted_result]\nfn raw() -> u32 { 5 }\nfn g(t: &[u32]) -> u32 { let x = raw(); t[probe(x, 1) as usize] }")
+
+
+def _fixes(src, code):
+    from kiflang import quickfix
+    mod, diags = quickfix.check("t.kif", src)
+    d = next(d for d in diags if d.code == code)
+    return [(f.title, quickfix.apply_edits(src, f.edits)) for f in quickfix.fixes_for(mod, d, diags)], quickfix.fixes_for(mod, d, diags)
+
+
+def test_quick_fix_marks_the_function_tainted_result():
+    src = "fn g(#[tainted] n: usize) -> usize { n }\n"
+    out, raw = _fixes(src, "KIFT005")
+    assert out[0][1].startswith("#[tainted_result]\nfn g") and not raw[0].preferred and not raw[0].auto
+
+
+def test_quick_fix_marks_the_callee_parameter_tainted():
+    src = "fn take(x: usize) -> usize { x }\nfn f(#[tainted] n: usize) -> usize {\n    take(n)\n}\n"
+    out, _ = _fixes(src, "KIFT003")
+    assert "fn take(#[tainted] x: usize)" in out[0][1]
+
+
+def test_quick_fix_marks_the_struct_tainted():
+    src = "struct s { a: u32 }\nfn f(#[tainted] n: u32, p: &mut s) {\n    p.a = n;\n}\n"
+    out, _ = _fixes(src, "KIFT004")
+    assert out[0][1].startswith("#[tainted]\nstruct s")
+
+
+def test_quick_fix_sanitizes_with_an_untaint_function_and_adds_the_missing_reason():
+    base = "#[untaint]\nfn clean(#[tainted] x: usize) -> usize { x & 3 }\n"
+    out, _ = _fixes(base + "fn f(#[tainted] n: usize, t: &[u32]) -> u32 {\n    t[n]\n}\n", "KIFT002")
+    assert 't[untaint!("TODO: justify", clean(n))]' in out[0][1]
+    out, _ = _fixes(base + "fn f(#[tainted] n: usize, t: &[u32]) -> u32 {\n    let a = clean(n);\n    t[a]\n}\n", "KIFT010")
+    assert 'let a = untaint!("TODO: justify", clean(n));' in out[0][1]
