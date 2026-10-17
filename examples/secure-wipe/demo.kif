@@ -1,4 +1,4 @@
-// Secure wipe demo (docs/kif-secure-wipe.md). Run ./show.sh to see diagnostics, IR and generated C for the current build.
+// Secure wipe demo (docs/kif-secure-wipe.md). Run ./run.py to see diagnostics, IR and generated C for the current build.
 // Each feature appears in the output once its stage is implemented; README.md lists which stage shows what.
 
 // A heap object the session points at but does not own the secrets of.
@@ -28,7 +28,7 @@ fn checksum(data: &[u8]) -> u32 {
     out
 }
 
-// The function-level attribute marks every plain local (rule W8); #[wipe_exempt] opts one variable out.
+// The function-level attribute marks every plain local (rule W8): the nuclear option, it costs optimization in the whole function, so keep such functions small; #[wipe_exempt] opts one variable out.
 #[export]
 #[secure_wipe]
 fn derive(seed: u64) -> u64 {

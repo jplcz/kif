@@ -805,6 +805,16 @@ def owns_type(t: Type, drops) -> bool:
     return False
 
 
+def plain_type(t: Type) -> bool:
+    """Whether `t` is plain data as far as the IR can tell from the text: nothing owned, no reference, slice or function (docs/kif-secure-wipe.md W3).
+    The checker has already rejected the explicit `#[secure_wipe]` on anything else; this decides which locals a `#[secure_wipe]` function covers."""
+    if t.kind == "scalar":
+        return True
+    if t.kind in ("array", "tuple"):
+        return all(plain_type(a) for a in t.args)
+    return False
+
+
 def drop_types(items) -> frozenset:
     """The names of the structs of a module with drop glue: they have a `drop` method, or a field that owns something (to a fixpoint)."""
     structs = {it.name.text: it for it in items if isinstance(it, ast.StructDecl)}
@@ -937,6 +947,7 @@ class _Builder:
             else:
                 loc = self.local(p.name.text, type_text(p.ty), False, True, _array_length(p.ty))
                 loc.taint = getattr(f, "taint_all", False) or any(a.name.text == "tainted" for a in getattr(p, "attrs", []))
+            loc.wipe = any(a.name.text == "secure_wipe" for a in getattr(p, "attrs", []))
             self.fn.params.append(loc)
             self.scopes[-1][loc.name] = loc
             if loc.owns:
@@ -1079,6 +1090,8 @@ class _Builder:
     def stmt(self, s) -> None:
         if isinstance(s, ast.Let):
             loc = self.local(s.name.text, type_text(s.ty) if s.ty is not None else self.tys(s.init), s.mut, False, _array_length(s.ty))
+            names = [a.name.text for a in s.attrs]
+            loc.wipe = "secure_wipe" in names or ("secure_wipe" in self.fn.attrs and "wipe_exempt" not in names and plain_type(loc.type))
             self.declare(loc, self.expr(s.init) if s.init is not None else None, s)
         elif isinstance(s, ast.LetPat):
             if s.init is not None:

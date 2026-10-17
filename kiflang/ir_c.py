@@ -592,6 +592,8 @@ class _Emit:
             self.strs[i.dst.id] = i.text
         elif isinstance(i, ir.Barrier):
             self.barrier(i)
+        elif isinstance(i, ir.Wipe):
+            self.wipe(i)
         elif isinstance(i, ir.Call):
             if i.reason:
                 self.put(f"/* kif: untaint: {i.callee}(): {i.reason.replace('*/', '* /')} ({lw.file}:{line}) */")
@@ -922,6 +924,23 @@ class _Emit:
         if isinstance(t, ast.PathType) and t.text in self.lw.enums:
             return "struct"  # not a scalar: no literal takes its type from here
         return None
+
+    def wipe(self, w: ir.Wipe) -> None:
+        """A secure wipe as the target's wipe macro (`KIF_SECURE_WIPE(&x, sizeof(x))`), preceded by an audit comment saying what is wiped and
+        why. A target that cannot wipe is an error, never a silent no-op (docs/kif-secure-wipe.md section 6)."""
+        from .lower_c import LowerError
+
+        lw = self.lw
+        plan = lw.t.wipe()
+        if plan.error:
+            raise LowerError(f"KIFW006: target {lw.t.name!r} cannot wipe, but {self.fn.name}() has a secure variable: {plan.error}")
+        if w.local in self.fn.params and self.arr_elem(w.local.type):
+            raise LowerError(f"KIFW006: {w.local.name!r} is an array parameter, which C passes as a pointer: its storage is the caller's, so it cannot be wiped here")
+        lw.uses_wipe = True
+        line = w.site.range.start.line + 1 if w.site is not None else 0
+        what = self.names[w.local] + w.path
+        self.put(f"/* kif: secure wipe: {what} ({w.ty}), {w.why.replace('*/', '* /')} ({lw.file}:{line or '?'}) */")
+        self.put(f"{plan.macro}(&{what}, sizeof({what}));")
 
     def barrier(self, b: ir.Barrier) -> None:
         """A speculation barrier as the target's `taint.fence` / `taint.barrier` snippet, always preceded by an audit comment saying

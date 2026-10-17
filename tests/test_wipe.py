@@ -94,3 +94,68 @@ def test_secure_struct_drop_is_found_wherever_it_is_declared():
     assert codes("#[secure_wipe] struct g { x: u32 }\nimpl g { fn a(&self) { } }\nimpl g { fn drop(&mut self) { } }") == ["KIFW002"]
     assert codes("#[secure_wipe] struct g<T> { x: u32 }\nimpl<T> g<T> { fn drop(&mut self) { } }") == ["KIFW002"]
     assert codes("#[secure_wipe] struct g { x: u32 }\nimpl g { fn new() -> g { g { x: 0 } } fn drop(&mut self) { } }") == ["KIFW002"]
+
+
+# ---- the `wipes` pass (stage 2)
+
+def wiped(src, name="f"):
+    """The IR text of function `name` after the `wipes` pass, with the wipe lines as (text, line index) for order checks."""
+    from kiflang import ir, symbols, wipes
+
+    mod = ir.build_module(symbols.analyze("/t/main.kif", src, None).tree)
+    assert not mod.skipped
+    fn = next(f for f in mod.functions if f.name == name)
+    wipes.analyze(fn, ir.CFG(fn))
+    assert ir.verify(fn) == []
+    return ir.dump(fn)
+
+
+def wipe_lines(text):
+    return [l.strip() for l in text.splitlines() if "wipe %" in l]
+
+
+def test_wipe_goes_after_the_last_use_not_at_scope_end():
+    t = wiped("fn f() -> u32 { #[secure_wipe] let a: u32 = 1; let b: u32 = a + 1; let c: u32 = b + 2; c }")
+    lines = t.splitlines()
+    w = next(n for n, l in enumerate(lines) if "wipe %a" in l)
+    assert "load %a" in lines[w - 1] and "dead %a" not in "".join(lines[:w])
+    assert len(wipe_lines(t)) == 1
+
+
+def test_a_variable_read_in_a_loop_is_wiped_once_after_it():
+    t = wiped("fn f(n: u32) -> u32 { #[secure_wipe] let mut a: u32 = 0; let mut i: u32 = 0; while i < n { a = a + i; i = i + 1; } let r: u32 = a; r }")
+    assert len(wipe_lines(t)) == 1
+    assert t.index("wipe %a") > t.index("b3.done")
+
+
+def test_a_branch_that_does_not_use_it_wipes_on_its_edge():
+    t = wiped("fn f(c: bool) -> u32 { #[secure_wipe] let a: u32 = 7; let mut r: u32 = 0; if c { r = a; } r }")
+    assert len(wipe_lines(t)) == 2
+
+
+def test_a_dead_store_is_wiped_right_after_it():
+    t = wiped("fn f() { #[secure_wipe] let a: u32 = 7; }")
+    lines = t.splitlines()
+    w = next(n for n, l in enumerate(lines) if "wipe %a" in l)
+    assert "store %a" in lines[w - 1] and "dead store" in lines[w]
+
+
+def test_unused_parameter_is_wiped_at_entry():
+    t = wiped("fn f(#[secure_wipe] k: u64, n: u64) -> u64 { n }")
+    assert wipe_lines(t) == ["wipe %k  // entry: unused parameter of 'k'"]
+    assert t.index("wipe %k") < t.index("load %n")
+
+
+def test_function_level_attribute_covers_locals_only():
+    t = wiped("#[secure_wipe] fn f(p: u64) -> u64 { let a: u64 = p + 1; #[wipe_exempt] let b: u64 = 2; a + b }")
+    assert [l.split()[1] for l in wipe_lines(t)] == ["%a"]
+
+
+def test_a_value_read_through_an_array_alias_is_wiped_after_the_read():
+    t = wiped("fn f() -> u8 { #[secure_wipe] let buf: [u8; 4] = [1; 4]; buf[1] }")
+    assert t.index("access index") < t.index("wipe %buf")
+
+
+def test_a_kept_reference_wipes_at_scope_exit():
+    t = wiped("fn g(r: &[u8; 4]) -> u8 { r[0] }\nfn f() -> u8 { #[secure_wipe] let buf: [u8; 4] = [1; 4]; let r: &[u8; 4] = &buf; g(r) }")
+    assert wipe_lines(t) and t.index("call g") < t.index("wipe %buf")

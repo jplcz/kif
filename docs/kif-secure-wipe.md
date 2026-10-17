@@ -1,7 +1,6 @@
 # Secure wipe: erasing secrets when they stop being used
 
-Status: **design, not implemented.** This page is the design for `#[secure_wipe]`, `#[wipe_exempt]` and the `wipe` target section.
-Nothing here is in the compiler yet; the stages are in section 12.
+Status: **being implemented, stage by stage** (section 12 says which are done). This page is the design for `#[secure_wipe]`, `#[wipe_exempt]` and the `wipe` target section.
 
 ## 1. Goal and threat model
 
@@ -208,6 +207,12 @@ On a function or method, every **named, trivially destructible local** becomes a
 non-trivial locals (they have their own drop glue, rule W3), references and pointers (a reference is not the object), the return slot
 (the caller owns the result), statics and `#[tls]`/`#[per_cpu]` cells (they never die), and variables marked `#[wipe_exempt]`.
 Compiler temporaries (an SSA value that never lives in a named slot) are not variables; they are in registers, see section 11.
+
+**Warning: this is the nuclear option.** Every wiped variable is forced into memory and written, with a compiler barrier after
+each wipe, so the optimizer can no longer keep it in a register, fold it away or reorder around the wipe. A function-level
+`#[secure_wipe]` makes the whole function slower and larger, and the effect grows with the number of locals. Use it only on small
+functions that handle secrets throughout (a key schedule, a PIN check). In anything larger mark the individual variables, and put
+`#[wipe_exempt]` on the loop counters and other public locals.
 
 **By-value parameters are not marked by the function attribute.** They usually live in registers; wiping them would force a spill to
 the stack just to erase it, which costs code and can itself leave the secret in memory. Mark one explicitly (`#[secure_wipe] key: [u8; 32]`)
@@ -480,11 +485,11 @@ Stated plainly, because the feature is only useful when people know its limit:
 ## 12. Stages
 
 1. **Attributes and checks.** Parse `#[secure_wipe]` on `let`, `fn` and `struct`, `#[wipe_exempt]` on fields and `let`; `KIFW001`-`KIFW005`; trivial-type classification shared with KIFP180. **Done** (`kiflang/wipe.py`, `tests/test_wipe.py`): `#[secure_wipe] let` parses (destructuring lets are rejected); `KIFW005` is reported for statics (kif has no `atomic` type yet, the name check is ready for it); the classification is its own (`wipe.plain`), because KIFP180 asks a different question (all-zero validity).
-2. **Liveness and the `Wipe` instruction.** The IR instruction, the `wipes` pass (live ranges per slot, rule W1/W2/W8/W9), `Local.wipe`, IR text, IR hash and serialization.
+2. **Liveness and the `Wipe` instruction.** The IR instruction, the `wipes` pass (live ranges per slot, rule W1/W2/W8), `Local.wipe`, IR text, IR hash and serialization. **Done** (`kiflang/wipes.py`: backward liveness; wipe after the last use, after a dead store, at entry for an unused parameter, on branch edges (split when needed); a slot whose address is kept is wiped at its `Dead`; a store does not end a range, so a loop variable is wiped once after the loop; an array load counts as a reference because C passes arrays by address). Not covered yet: a moved-from slot (rule W9), `#[secure_wipe(volatile)]` reaching `Wipe.volatile` (stage 5).
 3. **Secure structs.** The synthesized `drop` (rule W4/W5), wiring into `drops`, the moved-from slot rule.
 3a. **`secure_vector<T>`.** (C backend; the reloco C++ type is a separate task in `../reloco`, section 10a.) The type, the overlay on the vector lowering, the wiping operations and drop, `KIFW007`/`KIFW008`/`KIFW103` (rule W12); tests that every growth, shrink and drop emits its wipe.
 4. **Target section.** `wipe` in `target._SPEC` (placeholders validated), the default, `docs/kif-targets.md` rows, `KIFW006`, the FreeBSD kernel target sets `explicit_bzero`. **Done** (`Target.wipe()` returns a `WipePlan`; `KIFW006` is its `error`, reported by stage 5 when a wipe is emitted; Linux kernel sets `memzero_explicit`). Stage 4 was taken before stage 2 because the later stages read the plan.
-5. **C emission.** The call, the barrier and the comments of rule W7; the textual folder keeps it (rule W11).
+5. **C emission.** The call, the barrier and the comments of rule W7; the textual folder keeps it (rule W11). **Partly done**: `ir_c.wipe` emits `/* kif: secure wipe: ... */` and `KIF_SECURE_WIPE(&x, sizeof(x))`, the header defines the macro from `Target.wipe()` and includes its header, `KIFW006` is raised for a target that cannot wipe and for an array parameter. Still to do: the `volatile` variant.
 6. **Guard.** Reuse the `ct` guard machinery for rule W11 (`KIFW010`).
 7. **Tools.** `--wipe-report`, contract and attestation fields, hover, semantic token, quick fix, notes `KIFW101`/`KIFW102`.
 8. **Constant-time/wipe harness.** Inspect the built object for a surviving wipe (next to the `ct` harness).

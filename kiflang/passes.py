@@ -332,6 +332,16 @@ class TempDropsPass(Pass):
 
 
 @register
+class WipesPass(Pass):
+    name, kind, requires, summary = "wipes", "transform", ("cfg",), "insert the secure wipes of #[secure_wipe] variables at the end of their live ranges (adds Wipe)"
+
+    def run(self, ctx: Context) -> int:
+        from . import wipes
+
+        return wipes.analyze(ctx.fn, ctx.get("cfg"))
+
+
+@register
 class ElidePass(Pass):
     name, kind, requires, summary = "elide", "transform", ("prove",), "remove the checks the provers showed cannot fail; mark calls that may skip the callee's guard"
 

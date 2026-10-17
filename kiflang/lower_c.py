@@ -190,6 +190,7 @@ class Lowerer:
         self.fixed_name: Dict[int, str] = {}
         self.cur_owner: Optional[str] = None  # what `Self` means in the code being lowered
         self.uses_errno = False
+        self.uses_wipe = False  # a secure wipe is emitted: the target's wipe macro and header are defined in the header
         self.cast_enums: Set[str] = set()
         self.label = 0
         self.last_line = 0
@@ -1962,7 +1963,12 @@ static __inline void kif_str_drop(struct kif_str *s)
             incs.append(self.t.get("alloc.header"))
         if self.uses_errno and self.t.get("errno.header") not in incs:
             incs.append(self.t.get("errno.header"))
+        wipe = self.t.wipe()
+        if self.uses_wipe and wipe.header and wipe.header not in incs:
+            incs.append(wipe.header)
         head += [f"#include {i}" for i in incs] + ['#include "kif_c.h"'] + [f"#include {i}" for i in self.includes]
+        if self.uses_wipe:
+            head += ["", f"#ifndef {wipe.macro}", f"#define {wipe.macro}(p, n) do {{ {wipe.body}; }} while (0)", "#endif", ""]
         if self.uses_str and not (self.t.get("alloc.realloc") and self.t.get("alloc.free")):
             raise LowerError(f"target {self.t.name!r} has no alloc.realloc/alloc.free, so str cannot be lowered")
         if self.uses_str:
