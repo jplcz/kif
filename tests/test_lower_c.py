@@ -1227,3 +1227,15 @@ def test_ct_eq_lt_clamp_are_exhaustively_right_on_8_bits():
            'printf("%d\\n",bad);')
     m, r = compile_run(src, drv)
     assert r.stdout.split() == ["0"]
+
+
+def test_value_barrier_on_aggregates_is_one_barrier_per_scalar_field():
+    src = ("struct inner { a: u8, b: u32 }\nstruct s { x: u16, nest: inner, t: [u32; 3] }\n"
+           "fn g(v: s) -> s { spec::value(v) }\nfn h(v: inner) -> u32 { let w = spec::value(v); w.b + (w.a as u32) }\n")
+    m, r = compile_run(src, "struct s v = {1, {2, 3}, {4, 5, 6}}; struct s w = t_g(v); struct inner i = {7, 8};"
+                       'printf("%u %u %u %u %u %u %u %u\\n", w.x, w.nest.a, w.nest.b, w.t[0], w.t[1], w.t[2], (unsigned)t_h(i), 0u);')
+    assert r.stdout.split()[:7] == ["1", "2", "3", "4", "5", "6", "15"]
+    t = target.load("c")
+    text = lower_c.lower(analyze("t.kif", src, cfg_env=t.cfg_env()), t, "t")["t_proc.c"]
+    leaves = [x for x in text.splitlines() if "asm" in x]
+    assert any(".x)" in x for x in leaves) and any(".nest.a)" in x for x in leaves) and any(".nest.b)" in x for x in leaves) and any(".t[kif_i0])" in x for x in leaves)

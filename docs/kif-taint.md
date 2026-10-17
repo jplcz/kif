@@ -580,7 +580,9 @@ path is a place a reviewer sees, and the set is small.
    passes taint through (only an `#[untaint]` function cleans). The C backend emits `taint.fence` / `taint.barrier` with an audit comment
    (`explicit`, or `implicit` plus the reason when `why` is set) and refuses with an error naming the missing key. Implicit barriers (rule 5a) are done: the `barriers` transform pass (`taint_ir.insert_barriers`, after `taint`, in the default pipeline) puts a fence at the
    start of both successors of a `?` on tainted data and a value barrier after a tainted element load through a clean index, each with `why` (rule,
-   origin, line) for the audit comment; running it twice adds nothing. Not yet: per-field barriers for aggregates (a non-scalar `spec::value` is a lowering error, not a silent no-op).
+   origin, line) for the audit comment; running it twice adds nothing. Per-field barriers are done in the C backend (`ir_c.barrier_leaves`): a struct field by field, an array element by element in a loop (in place, an array temp is the
+   pointer), nested to any depth, an enum as its tag. Any other type (a tuple, a vector, a data-carrying enum) is a lowering error, not a silent no-op.
+   Stage 6 is complete.
 7. **Reasons.** `untaint!("reason", f(..))`, `KIFT010`, `Call.reason` in the IR and the audit comment in the C output (done with stage 1).
 8. **Policy and tooling.** `taint.exports`, `taint.sinks`, mitigation lists, purity check `KIFT009`, hover, lens.
 

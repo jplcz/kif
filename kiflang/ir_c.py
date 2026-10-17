@@ -938,15 +938,36 @@ class _Emit:
             self.put(f"/* kif: spec barrier ({which}): {why}, {lw.file}:{line} */")
             self.put(f"{text};")
             return
-        if b.dst is None or b.a is None or b.dst.ty not in self.lw_bits() and b.dst.ty != "bool":
-            raise LowerError(f"a speculation barrier on a value of type {getattr(b.dst, 'ty', '?')} is not lowered yet (scalars only): barrier its scalar fields one by one")
+        if b.dst is None or b.a is None:
+            raise LowerError("a value barrier needs an operand")
         t = f"kif_t{b.dst.id}"
-        text = lw.t.taint("barrier", v=t)
-        if text is None:
+        if lw.t.taint("barrier", v=t) is None:
             raise LowerError(f"target {lw.t.name!r} has no taint.barrier, but this code needs a speculation barrier: add it to the target's `taint` section")
         self.put(f"/* kif: spec value barrier ({which}): {why}, {lw.file}:{line} */")
-        self.put(f"{t} = {self.val(b.a, b.dst.ty)};")
-        self.put(f"{text};")
+        ty = b.dst.type
+        if self.arr_elem(ty) is not None:   # an array temp is the pointer to the elements: they are barriered in place
+            self.put(f"{t} = {self.val(b.a)};")
+        else:
+            self.put(f"{t} = {self.val(b.a, b.dst.ty)};")
+        for line_ in self.barrier_leaves(ty, t, 0):
+            self.put(line_)
+
+    def barrier_leaves(self, ty: irtypes.Type, path: str, depth: int) -> List[str]:
+        """One value barrier per scalar of `ty` held at `path` (a struct field by field, an array element by element, recursively): a
+        barrier only constrains a register value. An enum is its tag. Anything else is an error, never a silent skip."""
+        from .lower_c import LowerError
+
+        lw = self.lw
+        if (ty.is_scalar and (ty.name in self.lw_bits() or ty.name == "bool")) or self.is_enum(ty):
+            return [f"{lw.t.taint('barrier', v=path)};"]
+        d = self.struct_of(ty)
+        if d is not None:
+            return [x for f in d.fields for x in self.barrier_leaves(self.field_ir_of(f), f"{path}.{f.name.text}", depth)]
+        if ty.kind == irtypes.ARRAY and ty.length is not None and self.arr_elem(ty) is not None:
+            i = f"kif_i{depth}"
+            inner = self.barrier_leaves(ty.args[0], f"{path}[{i}]", depth + 1)
+            return [f"for (size_t {i} = 0; {i} < {ty.length}; {i}++) {{"] + ["\t" + x for x in inner] + ["}"]
+        raise LowerError(f"a speculation barrier on a value of type {ty} is not lowered: only scalars, enums, structs and arrays of them are")
 
     def ct_call(self, c: ir.Call) -> None:
         """A `ct::` intrinsic as branch-free integer arithmetic on the unsigned type of the same width, then the target's value
