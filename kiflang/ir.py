@@ -490,6 +490,7 @@ class Function:
     node: Optional[ast.FnDecl] = field(default=None, repr=False)
     elided_at: List[Tuple[Optional["Instr"], "Check"]] = field(default_factory=list)  # (the instruction that followed it, a removed check): where the `elide` pass took it out
     require_proved: Optional[frozenset] = None  # `#[require_proved]` in scope: the check kinds that must be proved (None: no requirement)
+    taint_sinks: frozenset = frozenset(("div", "rem", "shift"))  # the target's `taint.sinks`, copied from the checker's decision (not serialized)
     elided: List["Check"] = field(default_factory=list)  # checks the `elide` pass removed (`proof` says why; None: the callee's own guard covers it)
 
     @property
@@ -918,7 +919,7 @@ class _Builder:
                 loc = self.local("self", {"ref": "&Self", "mut": "&mut Self"}.get(p.receiver, self.owner or "Self"), False, True)
             else:
                 loc = self.local(p.name.text, type_text(p.ty), False, True, _array_length(p.ty))
-                loc.taint = any(a.name.text == "tainted" for a in getattr(p, "attrs", []))
+                loc.taint = getattr(f, "taint_all", False) or any(a.name.text == "tainted" for a in getattr(p, "attrs", []))
             self.fn.params.append(loc)
             self.scopes[-1][loc.name] = loc
             if loc.owns:
@@ -1782,6 +1783,7 @@ def build_function(fn: ast.FnDecl, resolve=None, entry: bool = True, drops=froze
     entry assumptions (for a function whose code generator does not guard them)."""
     built = _Builder(fn, resolve, entry, drops, owner, cells).run()
     built.require_proved = required_kinds(fn.attrs)
+    built.taint_sinks = getattr(fn, "taint_sinks", built.taint_sinks)
     return built
 
 

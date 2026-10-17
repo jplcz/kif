@@ -150,10 +150,24 @@ def _field_tainted(f) -> bool:
     return _has(f.attrs, "tainted")
 
 
+DEFAULT_SINKS = frozenset(("div", "rem", "shift"))
+
+
+def policy(env) -> tuple:
+    """`(exports_all, sinks)` from a cfg environment (`taint.exports` and `taint.sinks` of the target); the defaults without one."""
+    values = getattr(env, "values", None) or {}
+    sinks = values.get("taint_sinks")
+    return "all" in values.get("taint_exports", ()), DEFAULT_SINKS if sinks is None else frozenset(sinks)
+
+
 class _Walk:
     def __init__(self, bc, f) -> None:
         self.bc = bc
         self.f = f
+        self.exports_all, self.sinks = policy(getattr(bc.mod, "cfg", None))
+        # read by ir.py and taint_ir.py, so the IR check follows the same policy
+        f.taint_all = self.all_tainted()
+        f.taint_sinks = self.sinks
         self.scopes: List[Dict[str, _V]] = [{}]
         self.seen: set = set()
         self.wrapped: set = set()   # the calls that sit directly inside an `untaint!`
@@ -166,6 +180,11 @@ class _Walk:
             return
         self.seen.add(key)
         self.bc.d.append(dg.error(rng, code, f"tainted data ({origin.what}, line {origin.line}) {use}; {MITIGATIONS[code]}"))
+
+    def all_tainted(self) -> bool:
+        """`taint.exports: "all"` taints every parameter of an `#[export]` function that is not `#[trusted]`."""
+        a = getattr(self.f, "attrs", [])
+        return self.exports_all and _has(a, "export") and not _has(a, "trusted")
 
     def sink(self, t: Taint, rng, code: str, use: str) -> None:
         if t is not None:
@@ -257,7 +276,7 @@ class _Walk:
 
     def run(self) -> None:
         for p in self.f.params:
-            src = _has(getattr(p, "attrs", []), "tainted")
+            src = _has(getattr(p, "attrs", []), "tainted") or (self.f.taint_all and not p.receiver)
             o = Origin(f"parameter {p.name.text!r}", _line(p.name)) if src else None
             ref = isinstance(p.ty, ast.RefType)
             self.declare(p.name.text, o, ref, ref and p.ty.mut and not self.accepts(p))
@@ -359,10 +378,13 @@ class _Walk:
         if e.op in ("&&", "||"):
             self.sink(a, e.left.range, "KIFT001", f"decides the `{e.op}` operand")
             self.sink(b, e.right.range, "KIFT001", f"decides the `{e.op}` operand")
-        elif e.op in ("/", "%"):
+        elif e.op in ("/", "%") and ("div" if e.op == "/" else "rem") in self.sinks:
             self.sink(b, e.right.range, "KIFT002", "is a divisor (variable-latency, and the zero check is a branch)")
-        elif e.op in ("<<", ">>"):
+        elif e.op in ("<<", ">>") and "shift" in self.sinks:
             self.sink(b, e.right.range, "KIFT002", "is a shift count")
+        elif e.op == "*" and "mul" in self.sinks:
+            self.sink(a, e.left.range, "KIFT002", "is a multiplication operand (this target's multiplier has variable latency)")
+            self.sink(b, e.right.range, "KIFT002", "is a multiplication operand (this target's multiplier has variable latency)")
         return _join(a, b)
 
     # -- stores (rule 3)

@@ -130,6 +130,10 @@ class _Flow:
             self.define(i, self.of(i.a) if i.a is not None else None)   # a barrier does not clean the value: only an #[untaint] function does
         elif isinstance(i, (ir.Global, ir.Str, ir.Cell)):
             self.define(i, None)
+        elif isinstance(i, ir.Binary) and i.op == "*" and "mul" in self.fn.taint_sinks:
+            for a in (i.a, i.b):
+                self.sink(a, i.site, "KIFT002", "is a multiplication operand (this target's multiplier has variable latency)", report)
+            self.define(i, self.any(i.uses()))
         elif isinstance(i, (ir.Unary, ir.Binary, ir.Cast, ir.Len, ir.PatTest, ir.Project, ir.Opaque)):
             self.define(i, self.any(i.uses()))
 
@@ -137,6 +141,9 @@ class _Flow:
         use = {"index": "is used as an index or range", "range": "is used as an index or range",
                "div": "is a divisor, whose run time depends on the value", "shift": "is a shift count, whose run time depends on the value"}.get(c.kind)
         if use is None:
+            return
+        op = getattr(c.site, "op", None)
+        if c.kind == "div" and ("rem" if op == "%" else "div") not in self.fn.taint_sinks or c.kind == "shift" and "shift" not in self.fn.taint_sinks:
             return
         picked = {"index": c.args[:1], "range": c.args[:2], "div": c.args[1:2], "shift": c.args[:1]}[c.kind]
         for a in picked:

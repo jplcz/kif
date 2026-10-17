@@ -560,3 +560,65 @@ def test_implicit_barrier_comment_reaches_the_c_output():
     assert "kif: spec barrier (implicit): `?` on tainted data (result of h()" in text
     text = lower_c.lower(analyze("t.kif", LOAD_SRC, cfg_env=t.cfg_env()), t, "t")["t_proc.c"]
     assert "kif: spec value barrier (implicit): tainted element load" in text
+
+
+# -- stage 8: the target policy (`taint.exports`, `taint.sinks`)
+
+def policy_env(**v):
+    from kiflang import cfg
+
+    return cfg.Env({k: set(x) for k, x in v.items()}, set())
+
+
+def under(src: str, **v):
+    r = analyze("t.kif", src, cfg_env=policy_env(**v))
+    from kiflang import passes
+
+    ast_codes = sorted(d.code for d in r.diagnostics if d.code.startswith("KIFT"))
+    return ast_codes, sorted(d.code for d in passes.run_module(r.tree, ["taint"]).diagnostics)
+
+
+EXPORTED = "#[export]\n#[tainted_result]\nfn f(a: &[u32], i: usize) -> u32 { a[i] }\n"
+
+
+def test_exports_all_taints_every_parameter_of_an_export_function():
+    assert under(EXPORTED) == ([], [])                                   # default policy: only #[tainted] parameters
+    assert under(EXPORTED, taint_exports={"declared"}) == ([], [])
+    assert under(EXPORTED, taint_exports={"all"}) == (["KIFT002"], ["KIFT002"])   # AST check and IR backstop agree
+
+
+def test_trusted_opts_a_function_out_of_exports_all():
+    assert under("#[export]\n#[trusted]\n" + EXPORTED[len("#[export]\n"):], taint_exports={"all"}) == ([], [])
+    assert under("fn f(a: &[u32], i: usize) -> u32 { a[i] }\n", taint_exports={"all"}) == ([], [])   # not exported: unaffected
+
+
+DIV = "#[tainted_result]\nfn f(#[tainted] d: u32, n: u32) -> u32 { n / d }\n"
+REM = "#[tainted_result]\nfn f(#[tainted] d: u32, n: u32) -> u32 { n % d }\n"
+SHIFT = "#[tainted_result]\nfn f(#[tainted] d: u32, n: u32) -> u32 { n << d }\n"
+MUL = "#[tainted_result]\nfn f(#[tainted] d: u32, n: u32) -> u32 { n * d }\n"
+
+
+def test_sinks_default_list_and_mul_is_opt_in():
+    for src, hit in ((DIV, True), (REM, True), (SHIFT, True), (MUL, False)):
+        want = (["KIFT002"], ["KIFT002"]) if hit else ([], [])
+        assert under(src) == want, src
+    assert under(MUL, taint_sinks={"div", "rem", "shift", "mul"}) == (["KIFT002"], ["KIFT002"])
+
+
+def test_sinks_list_replaces_the_default():
+    only_div = {"taint_sinks": {"div"}}
+    assert under(DIV, **only_div)[0] == ["KIFT002"]
+    assert under(REM, **only_div) == ([], []) and under(SHIFT, **only_div) == ([], [])
+    assert under(DIV, taint_sinks=set()) == ([], [])
+
+
+def test_target_policy_reaches_the_cfg_environment_and_is_validated():
+    from kiflang import cfg, target
+
+    t = target.load("c")
+    t.data["taint"] = {"exports": "all", "sinks": ["mul"]}
+    env = cfg.env_of_target(t)
+    assert env.values["taint_exports"] == {"all"} and env.values["taint_sinks"] == {"mul"}
+    bad = lambda **k: [m for m in target.validate({"taint": k}) if m.startswith("taint.")]
+    assert bad(exports="all", sinks=["div", "mul"]) == []
+    assert bad(exports="some") and bad(sinks=["sqrt"])

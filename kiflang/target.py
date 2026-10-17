@@ -51,6 +51,7 @@ ERROR_ERRNO = {
     "io_error": "EIO", "operation_canceled": "ECANCELED", "security_violation": "EPERM", "page_fault": "EFAULT",
 }
 PLACEHOLDERS = {"panic": ("file", "line", "msg"), "assert": ("cond", "file", "line", "msg")}
+TAINT_SINKS = ("div", "rem", "shift", "mul")
 TAINT_PLACEHOLDERS = {"barrier": ("v",), "nospec": ("i", "n"), "fence": ()}
 
 
@@ -176,6 +177,8 @@ _SPEC: Dict[str, Any] = {
         "barrier": (_is_str, "C statement hiding the variable {v} from the optimizer and from speculation, e.g. `__asm__ volatile (\"\" : \"+r\"({v}))`"),
         "nospec": (_is_str, "C expression clamping index {i} below {n} even under speculation (the array_index_nospec idiom)"),
         "fence": (_is_str, "C statement that stops later instructions running speculatively, e.g. `__asm__ volatile (\"lfence\")`"),
+        "exports": (lambda v: v in ("all", "declared"), "`all`: every parameter of an #[export] function is tainted unless the function is #[trusted]; `declared` (default): only #[tainted] ones"),
+        "sinks": (lambda v: isinstance(v, list) and all(x in TAINT_SINKS for x in v), f"the operations whose tainted operand is an error, from {TAINT_SINKS}; default div, rem, shift (add `mul` for a variable-latency multiplier)"),
     },
     "alloc": {  # the whole section may be null: no allocator, nothing that allocates can be synthesized
         "malloc": (_is_str, "C expression allocating {size} bytes, NULL on failure, e.g. `kmalloc({size}, GFP_KERNEL)`"),

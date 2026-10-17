@@ -120,6 +120,8 @@ a loop in `extends` is an error. Check with `kif target check`; show the result 
 | `taint.barrier` | text | C statement hiding the variable `{v}` from the optimizer and from speculation; emitted after every `ct::` intrinsic result, e.g. `__asm__ volatile ("" : "+r"({v}))`. FreeBSD kernel: the same asm form. |
 | `taint.nospec` | text | C expression clamping `{i}` below `{n}` even under speculation (the `array_index_nospec` idiom). Used by stage 6. |
 | `taint.fence` | text | C statement stopping later instructions running speculatively, e.g. `__asm__ volatile ("lfence")`. Used by stage 6. |
+| `taint.exports` | `"all"` / `"declared"` | `all`: every parameter of an `#[export]` function is tainted, unless the function is `#[trusted]` (docs/kif-taint.md). Default `declared`: only `#[tainted]` parameters. Applies to the checker and to the IR backstop. |
+| `taint.sinks` | list | Operations where a tainted operand is an error, from `div`, `rem`, `shift`, `mul`. Default `["div", "rem", "shift"]`; a CPU with a variable-latency multiplier adds `mul`. A listed set replaces the default. |
 | `alloc` | object or `null` | The allocator of a **C** target; C++ targets use reloco and must not set it (nor `panic`, `assert`, `errno`, `cells`). `null`/absent: nothing that allocates can be synthesized for this target. |
 | `alloc.malloc` | text | C expression, `{size}` bytes, NULL on failure: `kmalloc({size}, GFP_KERNEL)`. |
 | `alloc.zalloc` | text | Zeroed variant (optional; else malloc + memset). |

@@ -174,6 +174,11 @@ def env_of_target(t) -> Env:
             env.flags.add(k)
         elif v not in (False, None):
             env.values[k] = {str(v)}
+    taint = t.data.get("taint") or {}   # the taint policy (docs/kif-taint.md); read by taint.policy
+    if "exports" in taint:
+        env.values["taint_exports"] = {str(taint["exports"])}
+    if "sinks" in taint:
+        env.values["taint_sinks"] = {str(x) for x in taint["sinks"]}
     for k, v in (t.data.get("cfg") or {}).items():
         if v is True:
             env.flags.add(k)
