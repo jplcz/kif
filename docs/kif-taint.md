@@ -343,6 +343,7 @@ Attribute summary (all validated by `facts.py`-style checks; a misplaced one is 
 | `KIFT008` | a tainted call target, or a tainted argument to an indirect call: function value, interface (rule 7) |
 | `KIFT010` | a call of an `#[untaint]` function lacks `untaint!("reason", ..)`, the reason is empty, or `untaint!` wraps something else (rule 9) |
 | `KIFT012` | *information, never an error*: the importing build's taint policy (sinks, `taint.exports: all`) is stricter than the one a `.kifm` was checked under, so the vendor's bodies were not checked for it |
+| `KIFT012` | *internal error*: a pass broke the constant-time shape of a function with a `ct::` region (section 7a, rules G1-G7); the message names the pass, the function and the rule |
 | `KIFT011` | *information, never an error*: an `#[untaint]` function builds its result from comparisons, `bool` casts or masks instead of `ct::` intrinsics and a `spec::value` barrier |
 | `KIFT009` | an `#[untaint]` function has a side effect: a store, a `&mut` parameter, an allocation, a panic, or a call to a non-pure function (rule 9) |
 
@@ -408,6 +409,7 @@ docs/kif-ir-passes.md): deterministic, cacheable, parallel.
 | `#[ensures]` | a call's `ensures` fact never un-taints its result |
 | `drops` / `tempdrops` | independent |
 | structured C output / folding | must not turn a branch-free `ct::` select into a branch: see section 7 |
+| every optimizing pass | checked after the pass by the `ct::` guard (rules G1-G7, `KIFT012`): see section 7a |
 
 ### 6.5 Editor and tools
 
@@ -503,6 +505,68 @@ Taint is a compile-time property: **no run-time representation, no cost**, excep
 - The structured output (`structure.py`) is unaffected: tainted values never reach `Branch`, so no structured `if`/`while` is
   built from one.
 - **C++ backend** shares everything above: taint is decided before lowering, and `taint.barrier` is per target.
+
+### 7a. The `ct::` optimizer guard (rules and implementation)
+
+The value barrier (above) only stops the *C compiler*. The kif passes (`prove`, `elide`, folding, structuring, textual
+folding) run first and could undo a branch-free sanitizer long before C is printed: a `ct::select` folded back into a `Branch`, a
+mask turned into a short-circuit, a barrier dropped as "dead". A branch that appears after the taint check ran is invisible to
+rule 5. The guard closes that hole by **re-checking the property after every pass**, not by trusting each pass to behave.
+
+**What is protected (the *ct region* of a function).** An IR instruction is in the region when it is (a) a `ct::` intrinsic call, or (b)
+defined by the body of an `#[untaint]` function that is not `trusted` (these bodies are already checked pure by `KIFT009`), or (c)
+derived from (a) or (b) by a pass. The tag is an IR instruction property (`ct=True`) that every pass copies to the instructions it
+creates from tagged ones. Ordinary code is not in a region, and a `#[untaint(trusted)]` body is not
+inspected (its author owns it) but its calls are treated as opaque.
+
+**Rules.** After every pass that changed a function, for each function that has a region:
+
+| # | Invariant | Rationale |
+|---|-----------|-----------|
+| G1 | **No new conditional control flow in the region.** No `Branch`, `Switch`, loop condition, early return, or short-circuit (`&&`/`||`) is created from, or replaces, a tagged instruction. | The whole point of a `ct::` select is that the same instructions run for every input. A branch makes timing depend on the value. |
+| G2 | **The taint check still passes.** The IR taint analysis (`taint_ir`) re-run on the function reports nothing that it did not report before the pass, and never a tainted value reaching a branch, address, divisor, shift count or listed multiplier. | A pass must not turn a clean-by-construction value into a sink use (for example by substituting an operand into a bounds check or a table index). |
+| G3 | **Every `ct::` intrinsic survives**, unless all its operands are compile-time constants (then nothing secret is involved and it may fold). It is not merged with another, duplicated, hoisted out of a loop or moved across a barrier. | Removing or moving the operation changes which instructions see the secret and when. |
+| G4 | **Barriers are kept, in order.** Every value barrier and `spec::barrier()`/`spec::value()` stays, once, after the operation it follows, and nothing is moved across it. Passes see a barrier as an impure, ordered call. | Dead-code elimination, CSE and scheduling would otherwise drop or reorder it: it has no result anyone reads. |
+| G5 | **Sanitizers are never inlined by kif.** A call to an `#[untaint]` function stays a call in the IR, with its `untaint!` reason, so G2 sees the data become clean exactly at the call and `--taint-report` lists the site. | kif has no inliner and does not get one for this: the C/C++ compiler inlines anyway, and the barrier inside the sanitizer is what keeps the select branch-free after that. An IR inliner would only add a way to break G1-G4. |
+| G6 | **No specialisation on tainted data.** No pass splits a path, unrolls, unswitches or threads a jump on a value that is tainted before the boundary, and no prover fact is *learned from* a branch on such a value. | That is a branch on the secret in disguise, and the specialised copies take different time. |
+| G7 | **Textual folding treats a region expression as opaque.** The folder never moves a tagged expression into a condition, duplicates it, or reorders it with another impure statement. | Same reason as G3/G4, applied to the printed form. |
+
+*Inlining.* kif does not inline. When the C or C++ compiler inlines a sanitizer, the value barrier inside it (section 7) is what
+keeps the select branch-free; the harness (separate stage) checks the result.
+
+*What the guard does not cover.* It cannot see what the C compiler or the CPU does with the final code: that is the barrier macro
+(section 7) plus the constant-time harness (separate stage), which measures or inspects the built object. It does not cover code
+outside a region: a tainted value in ordinary code is already forbidden from every sink by rules 5-8. The C++ backend is not part
+of this stage.
+
+**Failure.** A violated invariant is a *compiler error*, `KIFT012` (an internal error, severity error, never silent):
+`pass 'fold' broke the constant-time shape of sanitize(): G1: conditional branch created from a ct::select (line 4)`. The pass
+name, the function, the rule and the source line are in the message; the build fails. **There is no opt-out** (rule 10): the way to continue is to fix or leave out the offending pass
+(a project-visible pipeline choice), never to turn the guard off. The check costs
+nothing for a function without a region and one extra IR walk per pass for one with a region.
+
+**Implementation** (`kiflang/ctguard.py`, tests in `tests/test_ctguard.py`). `passes.run_function` calls `ctguard.mark(fn)` once, which sets the
+attribute `ct` on the region's instructions (an attribute, not a dataclass field, so the IR text, the `.kifm` form and the IR hash are
+unchanged). Before every `transform` pass on a function with a region it takes `ctguard.snapshot` (the branches, the `ct::` calls and
+barriers in order, the taint findings) and afterwards `ctguard.verify` reports `Gn: ...` strings that become `KIFT012` errors.
+G1 and G6 are one check (no conditional terminator that was not there before; no pass creates one today), G3 and G4 are the identity
+and order of the `ct::` calls and `Barrier`s, and G2 re-runs the IR taint check. A pass that creates an instruction from a tagged one
+must call `ctguard.inherit(new, old)`. G5 holds by construction (kif has no inliner). G7 is `ctguard.verify_text`, run by the C
+lowering after textual folding: each `/* kif: ct intrinsic */` comment must still be followed by its definition and its barrier, or the
+lowering fails with `KIFT012`.
+
+```kif
+// A sanitizer: its whole body is one ct region (rule G1..G7 apply to every instruction in it).
+#[untaint] fn clamp_index(#[tainted] i: usize, len: usize) -> usize {
+    ct::select(ct::lt(i, len), i, 0)     // G3: this select must stay; G1: no pass may turn it into `if i < len`
+}
+
+fn lookup(#[tainted] i: usize, t: &[u32; 16]) -> u32 {
+    // The call stays a call (G5), so `a` is clean exactly here and t[a] is legal; kif never inlines it.
+    let a = untaint!("clamped to the table size", clamp_index(i, 16));
+    t[a]
+}
+```
 
 ### Speculation barriers in the language and the IR
 

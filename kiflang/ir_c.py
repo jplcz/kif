@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from . import ir
 from . import irtypes
 from . import structure
+from . import ctguard
 from . import textfold
 
 
@@ -1648,6 +1649,12 @@ class _Emit:
         textfold.fold(chunks, self.conds, notes=self.lw.t.flag("fold_notes", True), pure=textfold.PURE_C)
         st = structure.build(fn) or structure.flat(fn)
         rendered = self.render(st.items, chunks, st.gotos, 0)
+        if any(getattr(i, "ct", False) for _, i in fn.instrs()) and any(ctguard.is_ct_call(i) for _, i in fn.instrs()):
+            bad = ctguard.verify_text("\n".join(rendered).split("\n"), lambda v: lw.t.taint("barrier", v=v))
+            if bad:
+                from .lower_c import LowerError
+
+                raise LowerError(f"KIFT012: the C output of {fn.name}() broke the constant-time shape: " + "; ".join(bad))
         for t in used_temps.values():
             if t.id in self.strs or t.id in self.errs or t.id in self.alias or t.id in self.allocs or t.id in self.rinc or t.type.kind == irtypes.UNIT:
                 continue
