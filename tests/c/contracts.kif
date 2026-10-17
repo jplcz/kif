@@ -1,0 +1,18 @@
+// #[ensures] and #[preserves] end to end: the return-site check, the checks the caller drops, and a fact kept across a call.
+#[ensures(some)]
+fn pick(x: u32) -> optional<u32> { if x > 3 { some(x) } else { none() } }
+
+// Breaks its own promise for x == 0: the run-time check at the return fires (the driver does not call it with 0).
+#[ensures(some)]
+fn liar(x: u32) -> optional<u32> { if x > 0 { some(x) } else { none() } }
+
+#[ensures(non_empty)]
+fn head(v: &[u32]) -> &[u32] { if v.len() > 0 { v } else { v } }
+
+#[preserves]
+fn touch(v: &mut [u32]) { v[0] = v[0] + 1; }
+
+fn use_pick(a: u32) -> u32 { if a > 3 { let o = pick(a); return *o.value(); } 0 }
+fn use_liar(a: u32) -> u32 { let o = liar(a); *o.value() }
+fn use_head(b: &[u32]) -> u32 { let h = head(b); h[0] }
+fn bump(v: &mut [u32]) -> u32 { if v.len() > 0 { touch(v); return v[0]; } 0 }
