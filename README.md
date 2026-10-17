@@ -208,3 +208,5 @@ target_link_libraries(my_driver PRIVATE device_ifs)
 ```
 
 An installed package works the same way with `find_package(jplcz_kif)`.
+
+--------
