@@ -53,3 +53,26 @@ def test_exempt_without_effect():
 
 def test_shared_variables():
     assert codes("#[secure_wipe] #[tls] static X: u32 = 0;") == ["KIFW005"]
+
+
+def test_target_wipe_defaults_and_overrides():
+    from kiflang import target
+
+    plan = target.load("c").wipe()
+    assert plan.default and plan.error is None and plan.macro == "KIF_SECURE_WIPE"
+    assert plan.body.startswith("memset((p), 0, (n)); __asm__ volatile") and plan.header == "<string.h>"
+    plan = target.load("freebsd-kernel").wipe()
+    assert plan.body == "explicit_bzero((p), (n))" and plan.header == "<sys/systm.h>" and not plan.default
+    assert "volatile unsigned char" in plan.volatile_body
+
+
+def test_target_wipe_barrier_rules():
+    from kiflang import target
+
+    t = target.load("c")
+    t.data["wipe"] = {"barrier": ""}
+    assert "no way to wipe" in t.wipe().error
+    t.data["wipe"] = {"call": "hw_erase({p}, {n})", "barrier_after_call": True, "macro": "ZERO"}
+    plan = t.wipe()
+    assert plan.error is None and plan.macro == "ZERO" and plan.body.endswith("__asm__ volatile (\"\" : : \"r\"((p)) : \"memory\")")
+    assert target.validate({"wipe": {"call": "f({x})"}}) != []

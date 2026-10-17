@@ -483,7 +483,7 @@ Stated plainly, because the feature is only useful when people know its limit:
 2. **Liveness and the `Wipe` instruction.** The IR instruction, the `wipes` pass (live ranges per slot, rule W1/W2/W8/W9), `Local.wipe`, IR text, IR hash and serialization.
 3. **Secure structs.** The synthesized `drop` (rule W4/W5), wiring into `drops`, the moved-from slot rule.
 3a. **`secure_vector<T>`.** (C backend; the reloco C++ type is a separate task in `../reloco`, section 10a.) The type, the overlay on the vector lowering, the wiping operations and drop, `KIFW007`/`KIFW008`/`KIFW103` (rule W12); tests that every growth, shrink and drop emits its wipe.
-4. **Target section.** `wipe` in `target._SPEC` (placeholders validated), the default, `docs/kif-targets.md` rows, `KIFW006`, the FreeBSD kernel target sets `explicit_bzero`.
+4. **Target section.** `wipe` in `target._SPEC` (placeholders validated), the default, `docs/kif-targets.md` rows, `KIFW006`, the FreeBSD kernel target sets `explicit_bzero`. **Done** (`Target.wipe()` returns a `WipePlan`; `KIFW006` is its `error`, reported by stage 5 when a wipe is emitted; Linux kernel sets `memzero_explicit`). Stage 4 was taken before stage 2 because the later stages read the plan.
 5. **C emission.** The call, the barrier and the comments of rule W7; the textual folder keeps it (rule W11).
 6. **Guard.** Reuse the `ct` guard machinery for rule W11 (`KIFW010`).
 7. **Tools.** `--wipe-report`, contract and attestation fields, hover, semantic token, quick fix, notes `KIFW101`/`KIFW102`.

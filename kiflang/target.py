@@ -23,7 +23,7 @@ import copy
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 
 from .symbols import SCALARS
 
@@ -53,6 +53,11 @@ ERROR_ERRNO = {
 PLACEHOLDERS = {"panic": ("file", "line", "msg"), "assert": ("cond", "file", "line", "msg")}
 TAINT_SINKS = ("div", "rem", "shift", "mul")
 TAINT_PLACEHOLDERS = {"barrier": ("v",), "nospec": ("i", "n"), "fence": ()}
+WIPE_PLACEHOLDERS = {"call": ("p", "n"), "barrier": ("p",), "volatile_call": ("p", "n")}
+WIPE_DEFAULT_CALL = "memset({p}, 0, {n})"
+WIPE_DEFAULT_BARRIER = '__asm__ volatile ("" : : "r"({p}) : "memory")'
+WIPE_DEFAULT_VOLATILE = ("{ volatile unsigned char *kif_q = (volatile unsigned char *)({p}); unsigned long long kif_i; "
+                         "for (kif_i = 0; kif_i < ({n}); kif_i++) kif_q[kif_i] = 0; }")
 
 
 class TargetError(Exception):
@@ -184,6 +189,14 @@ _SPEC: Dict[str, Any] = {
         "exports": (lambda v: v in ("all", "declared"), "`all`: every parameter of an #[export] function is tainted unless the function is #[trusted]; `declared` (default): only #[tainted] ones"),
         "sinks": (lambda v: isinstance(v, list) and all(x in TAINT_SINKS for x in v), f"the operations whose tainted operand is an error, from {TAINT_SINKS}; default div, rem, shift (add `mul` for a variable-latency multiplier)"),
     },
+    "wipe": {  # secure wipe (docs/kif-secure-wipe.md section 6)
+        "call": (_is_str, "C statement wiping {n} bytes at {p}, e.g. `explicit_bzero({p}, {n})`; it need not write zeros"),
+        "barrier": (lambda v: isinstance(v, str), "C statement after the wipe that reads {p} so the compiler cannot drop the write; `\"\"` for none"),
+        "barrier_after_call": (lambda v: isinstance(v, bool), "true or false: emit the barrier after `call` (default: only for the default memset)"),
+        "header": (_is_str, "include for the primitive, e.g. `<sys/systm.h>`"),
+        "macro": (lambda v: isinstance(v, str) and re.fullmatch(r"[A-Za-z_]\w*", v) is not None, "name of the greppable macro every wipe goes through (default KIF_SECURE_WIPE)"),
+        "volatile_call": (_is_str, "C statement wiping {n} bytes at {p} for #[secure_wipe(volatile)], opaque to the compiler"),
+    },
     "alloc": {  # the whole section may be null: no allocator, nothing that allocates can be synthesized
         "malloc": (_is_str, "C expression allocating {size} bytes, NULL on failure, e.g. `kmalloc({size}, GFP_KERNEL)`"),
         "zalloc": (_is_str, "like malloc but zeroed; optional (kif then uses malloc + memset)"),
@@ -304,6 +317,11 @@ def validate(data: Any, where: str = "") -> List[str]:
             for ph in re.findall(r"\{(\w*)\}", text) if isinstance(text, str) else ():
                 if ph not in names:
                     out.append(f"taint.{k}: unknown placeholder {{{ph}}} (allowed: {', '.join(names) or 'none'})")
+        for k, names in WIPE_PLACEHOLDERS.items():
+            text = (data.get("wipe") or {}).get(k)
+            for ph in re.findall(r"\{(\w*)\}", text) if isinstance(text, str) else ():
+                if ph not in names:
+                    out.append(f"wipe.{k}: unknown placeholder {{{ph}}} (allowed: {', '.join(names)})")
         for sect, names in PLACEHOLDERS.items():
             macro = (data.get(sect) or {}).get("macro")
             if isinstance(macro, str):
@@ -324,6 +342,15 @@ def _merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
         else:
             out[k] = copy.deepcopy(v)
     return out
+
+
+class WipePlan(NamedTuple):
+    macro: str  # name of the macro every wipe goes through
+    body: str  # statements of the macro: the wipe call, then the barrier when it applies
+    volatile_body: str  # statements for the `#[secure_wipe(volatile)]` variant
+    header: Optional[str]  # include for the primitive, with its brackets
+    error: Optional[str]  # KIFW006 text when the target cannot wipe
+    default: bool  # the built-in memset default is in use
 
 
 class Target:
@@ -433,6 +460,26 @@ class Target:
         """`taint.barrier`, `nospec` or `fence` with its placeholders filled; None when the target has none."""
         text = self.get(f"taint.{which}")
         return None if text is None else re.sub(r"\{(\w+)\}", lambda m: args.get(m.group(1), m.group(0)), text)
+
+    def wipe(self) -> "WipePlan":
+        """The secure-wipe primitive with the defaults applied (docs/kif-secure-wipe.md section 6)."""
+        w = self.data.get("wipe") or {}
+        call = w.get("call")
+        after = w.get("barrier_after_call", call is None)
+        barrier = w.get("barrier", WIPE_DEFAULT_BARRIER)
+        error = None
+        if after and barrier == "":
+            error = ("the target has no way to wipe: wipe.barrier is empty but the wipe call is elidable "
+                     "(set wipe.call to a non-elidable primitive, or wipe.barrier)")
+        sub = lambda text, **a: re.sub(r"\{(\w+)\}", lambda m: a.get(m.group(1), m.group(0)), text)  # noqa: E731
+        body = sub(call if call is not None else WIPE_DEFAULT_CALL, p="(p)", n="(n)")
+        if after and barrier:
+            body += "; " + sub(barrier, p="(p)")
+        header = w.get("header", None if call is not None else "<string.h>")
+        if header and header[0] not in '<"':
+            header = f"<{header}>"
+        vol = sub(w.get("volatile_call", WIPE_DEFAULT_VOLATILE), p="(p)", n="(n)")
+        return WipePlan(w.get("macro", "KIF_SECURE_WIPE"), body, vol, header, error, call is None)
 
     def alloc(self, which: str, **args: str) -> Optional[str]:
         """The allocator text (`malloc`, `zalloc`, `realloc`, `free`, `aligned`) with its placeholders filled; None when the

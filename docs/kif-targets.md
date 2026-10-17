@@ -124,6 +124,13 @@ a loop in `extends` is an error. Check with `kif target check`; show the result 
 | `taint.fence` | text | C statement stopping later instructions running speculatively, e.g. `__asm__ volatile ("lfence")`. Used by stage 6. |
 | `taint.exports` | `"all"` / `"declared"` | `all`: every parameter of an `#[export]` function is tainted, unless the function is `#[trusted]` (docs/kif-taint.md). Default `declared`: only `#[tainted]` parameters. Applies to the checker and to the IR backstop. |
 | `taint.sinks` | list | Operations where a tainted operand is an error, from `div`, `rem`, `shift`, `mul`. Default `["div", "rem", "shift"]`; a CPU with a variable-latency multiplier adds `mul`. A listed set replaces the default. |
+| `wipe` | object | Secure wipe (docs/kif-secure-wipe.md section 6). Absent: `memset({p}, 0, {n})` followed by the GCC/Clang asm barrier. FreeBSD kernel: `explicit_bzero`; Linux kernel: `memzero_explicit`. |
+| `wipe.call` | text | C statement wiping `{n}` bytes at `{p}`, e.g. `explicit_bzero({p}, {n})`. It need not write zeros (a hardware engine or a TRNG fill is fine). Setting it means the primitive is non-elidable, so no barrier is emitted unless `barrier_after_call` is true. |
+| `wipe.barrier` | text | C statement placed after the wipe that reads `{p}`, so the write is not dead; default the GCC/Clang `__asm__ volatile ("" : : "r"({p}) : "memory")`. `""` means none, which is `KIFW006` when a barrier is needed. |
+| `wipe.barrier_after_call` | bool | Emit the barrier after `call`. Default `true` for the built-in memset, `false` once `call` is set. |
+| `wipe.header` | text | Include for the primitive (`<string.h>` for the default). A bare name is wrapped in angle brackets. |
+| `wipe.macro` | identifier | Name of the greppable macro every wipe is emitted through. Default `KIF_SECURE_WIPE`. |
+| `wipe.volatile_call` | text | Wipe for `#[secure_wipe(volatile)]`, `{n}` bytes at `{p}`; default a `volatile unsigned char` loop. |
 | `alloc` | object or `null` | The allocator of a **C** target; C++ targets use reloco and must not set it (nor `panic`, `assert`, `errno`, `cells`). `null`/absent: nothing that allocates can be synthesized for this target. |
 | `alloc.malloc` | text | C expression, `{size}` bytes, NULL on failure: `kmalloc({size}, GFP_KERNEL)`. |
 | `alloc.zalloc` | text | Zeroed variant (optional; else malloc + memset). |
