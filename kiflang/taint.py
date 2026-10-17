@@ -186,6 +186,7 @@ class _Walk:
         self.scopes: List[Dict[str, _V]] = [{}]
         self.seen: set = set()
         self.wrapped: set = set()   # the calls that sit directly inside an `untaint!`
+        f.taint_locals = []         # (name, declaration range, taint at the declaration), read by the LSP hover
 
     # -- diagnostics
 
@@ -259,8 +260,10 @@ class _Walk:
                 return i, self.scopes[i][name]
         return None
 
-    def declare(self, name: str, t: Taint, ref: bool = False, clean_place: bool = False) -> None:
+    def declare(self, name: str, t: Taint, ref: bool = False, clean_place: bool = False, rng=None) -> None:
         self.scopes[-1][name] = _V(t, ref, clean_place)
+        if rng is not None:
+            self.f.taint_locals.append((name, rng, t))
 
     def update(self, name: str, t: Taint, strong: bool) -> None:
         hit = self.find(name)
@@ -299,7 +302,7 @@ class _Walk:
             src = _has(getattr(p, "attrs", []), "tainted") or (self.f.taint_all and not p.receiver)
             o = Origin(f"parameter {p.name.text!r}", _line(p.name)) if src else None
             ref = isinstance(p.ty, ast.RefType)
-            self.declare(p.name.text, o, ref, ref and p.ty.mut and not self.accepts(p))
+            self.declare(p.name.text, o, ref, ref and p.ty.mut and not self.accepts(p), p.name.range)
         t = self.block(self.f.body)
         if self.f.body.tail is not None:
             self.returns(self.whole(self.f.body.tail, t), self.f.body.tail.range)
@@ -327,7 +330,7 @@ class _Walk:
     def stmt(self, s) -> None:
         if isinstance(s, ast.Let):
             t = self.expr(s.init) if s.init is not None else None
-            self.declare(s.name.text, t, isinstance(s.ty, ast.RefType) or _is_borrow(s.init))
+            self.declare(s.name.text, t, isinstance(s.ty, ast.RefType) or _is_borrow(s.init), rng=s.name.range)
         elif isinstance(s, ast.LetPat):
             t = self.expr(s.init) if s.init is not None else None
             self.bind(s.pattern, t)
@@ -336,7 +339,7 @@ class _Walk:
 
     def bind(self, p, t: Taint) -> None:
         if isinstance(p, ast.BindPat):
-            self.declare(p.name.text, t)
+            self.declare(p.name.text, t, rng=p.name.range)
             if p.sub is not None:
                 self.bind(p.sub, t)
         elif isinstance(p, ast.TuplePat):
@@ -823,6 +826,27 @@ def describe(f) -> List[str]:
     if names:
         out.append("**#[tainted]** parameters: " + ", ".join(f"`{n}`" for n in names) + ".")
     return out
+
+
+def describe_local(mod, pos, name: str) -> Optional[str]:
+    """Hover text for the local or parameter `name` at `pos`: whether it holds tainted data (and where that came from) when it was bound."""
+    from .modsec import _decls
+    for _key, f, _emb in (_decls(mod.tree) if mod.tree is not None else ()):
+        body = getattr(f, "body", None)
+        if body is None or not f.range.contains(pos):
+            continue
+        best = None
+        for n, rng, t in getattr(f, "taint_locals", []):
+            if n == name and (rng.start.line, rng.start.col) <= (pos.line, pos.col):
+                best = t, rng
+        if best is None:
+            return None
+        t, rng = best
+        if t is None:
+            return f"**Taint:** `{name}` is clean where it is bound."
+        return (f"**Taint:** `{name}` is tainted ({t.what}, line {t.line}); it may not decide a branch, an index, a divisor or a shift count "
+                "until an `#[untaint]` function cleans it. A later clean whole-value store makes it clean again.")
+    return None
 
 
 def check_body(bc, f) -> None:

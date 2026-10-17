@@ -180,3 +180,19 @@ def test_hover_on_a_precompiled_function_shows_the_vendor_origin(tmp_path):
     out = r.s.handle({"id": 9, "method": "textDocument/hover", "params": {"textDocument": {"uri": r.uri}, "position": {"line": 1, "character": col}}})
     value = out[0]["result"]["contents"]["value"]
     assert "From `ddk.kifm`" in value and "keeps index checks" in value, value
+
+
+def test_hover_on_a_local_says_whether_it_is_tainted():
+    src = "fn f(#[tainted] n: usize, m: usize) -> usize {\n    let a = n + 1;\n    let b = m;\n    b\n}\n"
+    r = Rig("off")
+    r.open(src)
+
+    def hover(line, text):
+        col = src.split("\n")[line].index(text)
+        out = r.s.handle({"id": 9, "method": "textDocument/hover", "params": {"textDocument": {"uri": r.uri}, "position": {"line": line, "character": col}}})
+        return out[0]["result"]["contents"]["value"] if out[0]["result"] else None
+
+    assert "parameter 'n'" in hover(0, "n:") and "is tainted" in hover(0, "n:")
+    assert "`m` is clean" in hover(0, "m:")
+    assert "`a` is tainted" in hover(1, "a =")
+    assert "`b` is clean" in hover(3, "b")

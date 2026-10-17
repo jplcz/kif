@@ -615,6 +615,11 @@ class Server:
 
     def req_textDocument_hover(self, p: dict) -> Optional[dict]:
         mod, sym, found, tokens = self._target(p["textDocument"]["uri"], lsp_pos(p["position"]))
+        if found is not None and sym is None:
+            note = taint.describe_local(mod, lsp_pos(p["position"]), found[0][-1]) if len(found[0]) == 1 else None
+            if note is None:
+                return None
+            return {"contents": {"kind": "markdown", "value": note + "\n\n_Taint: docs/kif-taint.md_"}, "range": lsp_range(tokens[found[1]].range)}
         if sym is None or found is None:
             return None
         text = f"```kif\n{self._signature(sym)}\n```"
