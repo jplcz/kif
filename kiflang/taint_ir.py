@@ -47,6 +47,8 @@ class _Flow:
         self.fn, self.cfg = fn, cfg
         self.temps: Dict[int, Origin] = {}
         self.found: Dict[Tuple[str, int, int], Tuple[str, object, Origin, str]] = {}
+        self.tries: List[Tuple[ir.Test, Origin]] = []       # `?` on tainted data: a barrier goes at the start of both successors
+        self.loads: List[Tuple[ir.Access, Origin]] = []     # tainted element loaded through a clean index: a value barrier follows
 
     # -- values
 
@@ -110,10 +112,15 @@ class _Flow:
             if i.kind in ("index", "range"):
                 for a in i.args:
                     self.sink(a, i.site, "KIFT002", "is used as an index or range", report)
+            o = self.of(i.base)
+            if report and i.kind == "index" and o is not None and self.any(i.args) is None:
+                self.loads.append((i, o))
             self.define(i, self.any([i.base]))
         elif isinstance(i, ir.Call):
             self.call(i, report)
         elif isinstance(i, ir.Test):
+            if report and i.kind == "failed" and self.of(i.base) is not None:
+                self.tries.append((i, self.of(i.base)))
             self.define(i, None if i.kind == "failed" else self.of(i.base))
         elif isinstance(i, ir.Make):
             if i.kind == "repeat" and len(i.args) == 2:
@@ -184,6 +191,46 @@ class _Flow:
         for b in order:
             if b.id in ins:
                 self.block(b, dict(ins[b.id]), True)
+
+
+def _is_barrier(i, kind: str) -> bool:
+    return isinstance(i, ir.Barrier) and i.kind == kind and bool(i.why)
+
+
+def insert_barriers(fn: ir.Function, flow: "_Flow") -> int:
+    """Rule 5a (docs/kif-taint.md): a fence at the start of both successors of a `?` on tainted data, and a value barrier after a
+    tainted element load. Each carries `why`, the audit comment of the generated code. Running twice adds nothing."""
+    n = 0
+    top = max((t.id for b in fn.blocks for i in b.instrs for t in [i.defs()] if t is not None), default=0)
+    for t, o in flow.tries:
+        br = next((b.term for b in fn.blocks if isinstance(b.term, ir.Branch) and b.term.cond is t.dst), None)
+        for blk in (br.then, br.otherwise) if br is not None else ():
+            if not (blk.instrs and _is_barrier(blk.instrs[0], "fence")):
+                blk.instrs.insert(0, ir.Barrier("fence", why=f"`?` on tainted data ({o.what}, line {o.line}) [rule 5a]", site=t.site))
+                n += 1
+    for acc, o in flow.loads:
+        for blk in fn.blocks:
+            if acc in blk.instrs:
+                k = blk.instrs.index(acc)
+                if k + 1 < len(blk.instrs) and _is_barrier(blk.instrs[k + 1], "value") and blk.instrs[k + 1].a is not None:
+                    break
+                top += 1
+                raw = ir.Temp(top, acc.dst.ty)
+                orig, acc.dst = acc.dst, raw
+                blk.instrs.insert(k + 1, ir.Barrier("value", orig, raw, why=f"tainted element load ({o.what}, line {o.line}) [rule 5a]", site=acc.site))
+                n += 1
+                break
+    return n
+
+
+def barriers(ctx) -> int:
+    """The `barriers` transform: run the flow, then insert what rule 5a asks for."""
+    fn = ctx.fn
+    if not fn.blocks or "trusted" in fn.attrs:
+        return 0
+    flow = _Flow(fn, ctx.get("cfg"))
+    flow.run()
+    return insert_barriers(fn, flow)
 
 
 def check(ctx) -> int:

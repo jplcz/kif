@@ -443,7 +443,7 @@ def test_ir_untaint_call_is_clean_and_tainted_result_is_a_source():
 
 
 def test_ir_question_mark_is_allowed():
-    src = "fn h(#[tainted] n: usize) -> result<u32, error> { ok(n as u32) }\n#[tainted_result]\nfn f(#[tainted] n: usize) -> result<u32, error> { let v = h(n)?; ok(v) }\n"
+    src = "fn h(#[tainted] n: usize) -> result<u32> { ok(n as u32) }\n#[tainted_result]\nfn f(#[tainted] n: usize) -> result<u32> { let v = h(n)?; ok(v) }\n"
     assert ir_codes(src) == []
 
 
@@ -512,3 +512,51 @@ def test_spec_value_in_c_has_the_audit_comment_and_barrier():
     import pytest
     with pytest.raises(lower_c.LowerError, match="taint.fence"):
         lower_c.lower(analyze("t.kif", SPEC_SRC, cfg_env=t.cfg_env()), t, "t")
+
+
+# -- stage 6: implicit barriers (rule 5a)
+
+def barriered(src: str, name: str = "f") -> str:
+    from kiflang import ir as kir, passes
+
+    r = passes.run_module(analyze("t.kif", src).tree, passes.pipeline("default"))
+    return kir.dump(next(f for f in r.module.functions if f.name == name))
+
+
+TRY_SRC = "#[tainted_result]\nfn h(n: usize) -> result<u32> { ok(n as u32) }\nfn f(c: usize) -> result<u32> { let v = h(c)?; ok(v) }\n"
+LOAD_SRC = "fn f(#[tainted] t: &[u32], c: usize) -> u32 { t[c] }\n"
+
+
+def test_try_on_tainted_data_gets_a_fence_on_both_successors():
+    text = barriered(TRY_SRC)
+    assert text.count("barrier fence  // implicit: `?` on tainted data (result of h()") == 2
+    assert "b1.try_fail:\n    barrier fence" in text and "b2.try_ok:\n    barrier fence" in text
+
+
+def test_tainted_element_load_gets_a_value_barrier():
+    text = barriered(LOAD_SRC)
+    assert text.count("barrier value") == 1 and "// implicit: tainted element load (parameter 't'" in text
+
+
+def test_clean_code_gets_no_implicit_barrier():
+    assert "barrier" not in barriered("fn f(t: &[u32], c: usize) -> u32 { t[c] }\n")
+    assert "barrier" not in barriered("fn h(n: usize) -> result<u32> { ok(n as u32) }\nfn f(c: usize) -> result<u32> { let v = h(c)?; ok(v) }\n", "f")
+
+
+def test_barriers_are_not_added_twice_and_still_taint():
+    from kiflang import passes
+
+    r = passes.run_module(analyze("t.kif", LOAD_SRC).tree, ["cfg", "barriers", "barriers"])
+    from kiflang import ir as kir
+    assert kir.dump(r.module.functions[0]).count("barrier value") == 1
+
+
+def test_implicit_barrier_comment_reaches_the_c_output():
+    from kiflang import lower_c, target
+
+    t = target.load("c")
+    t.data["taint"]["fence"] = '__asm__ volatile ("")'
+    text = lower_c.lower(analyze("t.kif", TRY_SRC, cfg_env=t.cfg_env()), t, "t")["t_proc.c"]
+    assert "kif: spec barrier (implicit): `?` on tainted data (result of h()" in text
+    text = lower_c.lower(analyze("t.kif", LOAD_SRC, cfg_env=t.cfg_env()), t, "t")["t_proc.c"]
+    assert "kif: spec value barrier (implicit): tainted element load" in text

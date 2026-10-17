@@ -578,8 +578,9 @@ path is a place a reviewer sees, and the set is small.
    argument count, interpreted as identity), lowered to the new IR instruction `Barrier(kind, dst, a, why)` (serialized; the `IR_VERSION`
    bump to 2 already covers it), printed by `kif ir`, pure in `#[untaint]` bodies, completed and signature-helped in the editor. `spec::value`
    passes taint through (only an `#[untaint]` function cleans). The C backend emits `taint.fence` / `taint.barrier` with an audit comment
-   (`explicit`, or `implicit` plus the reason when `why` is set) and refuses with an error naming the missing key. Not yet: implicit barriers
-   for `?` and tainted element loads, and per-field barriers for aggregates (a non-scalar `spec::value` is a lowering error, not a silent no-op).
+   (`explicit`, or `implicit` plus the reason when `why` is set) and refuses with an error naming the missing key. Implicit barriers (rule 5a) are done: the `barriers` transform pass (`taint_ir.insert_barriers`, after `taint`, in the default pipeline) puts a fence at the
+   start of both successors of a `?` on tainted data and a value barrier after a tainted element load through a clean index, each with `why` (rule,
+   origin, line) for the audit comment; running it twice adds nothing. Not yet: per-field barriers for aggregates (a non-scalar `spec::value` is a lowering error, not a silent no-op).
 7. **Reasons.** `untaint!("reason", f(..))`, `KIFT010`, `Call.reason` in the IR and the audit comment in the C output (done with stage 1).
 8. **Policy and tooling.** `taint.exports`, `taint.sinks`, mitigation lists, purity check `KIFT009`, hover, lens.
 

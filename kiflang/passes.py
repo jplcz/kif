@@ -286,6 +286,16 @@ class TaintPass(Pass):
 
 
 @register
+class TaintBarriersPass(Pass):
+    name, kind, requires, after, summary = "barriers", "transform", ("cfg",), ("taint",), "insert the speculation barriers rule 5a asks for: a fence after `?` on tainted data, a value barrier after a tainted element load"
+
+    def run(self, ctx: Context) -> int:
+        from . import taint_ir
+
+        return taint_ir.barriers(ctx)
+
+
+@register
 class ContractsPass(Pass):
     name, kind, requires, summary = "contracts", "check", (), "a `#[preserves]` function must not change what it promises to keep (KIFI030)"
 
