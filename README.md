@@ -116,6 +116,8 @@ reviewable decision, and kif keeps those guarantees at the language level:
 - **A safety checker for the surrounding C++.** `reloco-tidy` enforces the same rules in hand-written C++ (no raw pointers or C
   arrays, `noexcept`, initialised locals, a Rust-style borrow check), with opt-in regions and explicit exemptions.
 
+
+
 ## Status
 
 The language is under active construction, and the repository holds the front end:

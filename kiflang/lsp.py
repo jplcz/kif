@@ -43,7 +43,7 @@ from .symbols import Module, SCALARS, Symbol, analyze
 
 # LSP SymbolKind values.
 SK_NAMESPACE, SK_CLASS, SK_METHOD, SK_ENUM, SK_INTERFACE, SK_FUNCTION, SK_VARIABLE, SK_CONSTANT = 3, 5, 6, 10, 11, 12, 13, 14
-SEM_MODS = ["tainted"]
+SEM_MODS = ["tainted", "secure"]
 SEM_TYPES = ["namespace", "type", "enum", "interface", "struct", "function", "variable"]
 SEM_KIND = {"struct": 4, "enum": 2, "interface": 3, "fn": 5, "const": 6}
 SK_FIELD, SK_ENUM_MEMBER, SK_STRUCT, SK_TYPE_PARAMETER = 8, 22, 23, 26
@@ -529,11 +529,12 @@ class Server:
             sym = lookup(mod, found[0]) if found else None
             idx = SEM_KIND.get(sym.kind) if sym is not None else None
             tainted = (t.range.start.line, t.range.start.col) in hot
+            secure = sym is not None and any(a.name.text == "secure_wipe" for a in getattr(sym.node, "attrs", None) or [])
             if idx is None and not tainted:
                 continue
             line, col = t.range.start.line, t.range.start.col
             data += [line - last[0], col - (last[1] if line == last[0] else 0), t.range.end.col - col,
-                     SEM_TYPES.index("variable") if idx is None else idx, 1 if tainted else 0]
+                     SEM_TYPES.index("variable") if idx is None else idx, (1 if tainted else 0) | (2 if secure else 0)]
             last = (line, col)
         return {"data": data}
 
@@ -653,6 +654,11 @@ class Server:
             notes.insert(0, origin + ".")
         if notes:
             text += "\n\n" + "\n\n".join(notes) + "\n\n_Taint: docs/kif-taint.md_"
+        wipe = [a for a in getattr(sym.node, "attrs", None) or [] if a.name.text == "secure_wipe"]
+        if wipe:
+            what = "every local of this function is wiped after its last use (the nuclear option: the body is compiled unoptimized)" \
+                if sym.kind == "fn" else "its values are wiped when dropped, field by field (`#[wipe_exempt]` fields excepted)"
+            text += f"\n\n**Secure wipe:** {what}.\n\n_docs/kif-secure-wipe.md_"
         return {"contents": {"kind": "markdown", "value": text}, "range": lsp_range(tokens[found[1]].range)}
 
     @staticmethod

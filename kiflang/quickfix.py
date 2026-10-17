@@ -318,6 +318,12 @@ def _taint_store(ctx: Context, d: Diagnostic) -> List[Fix]:
     return []
 
 
+@fixer("KIFW003")
+def _wipe_exempt(ctx: Context, d: Diagnostic) -> List[Fix]:
+    return [Fix("Tag the field #[wipe_exempt] (it is then left unwiped; docs/kif-secure-wipe.md, rule W3)",
+                [_insert(d.range.start, "#[wipe_exempt] ")], "KIFW003")]
+
+
 @fixer("KIFT001", "KIFT002", "KIFT010")
 def _taint_sanitize(ctx: Context, d: Diagnostic) -> List[Fix]:
     """Wrap the offending expression in a one-argument `#[untaint]` function of this module, with a reason to be filled in."""

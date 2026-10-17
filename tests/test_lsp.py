@@ -505,3 +505,16 @@ def test_links_and_folding(tmp_path):
     assert text.split("\n")[r["start"]["line"]][r["start"]["character"]:r["end"]["character"]] == "lib.kif"
     folds = {(f["startLine"], f["endLine"], f["kind"]) for f in c.call("textDocument/foldingRange", {"textDocument": {"uri": uri}})}
     assert folds == {(0, 1, "comment"), (3, 5, "region")}
+
+
+def test_secure_wipe_hover_token_and_quickfix(c):
+    text = "#[secure_wipe]\nstruct key { k: [u8; 4], p: ptr<u32> }\n"
+    uri, _ = c.open("w.kif", text)
+    hover = c.call("textDocument/hover", c.at(uri, 1, 8))["contents"]["value"]
+    assert "Secure wipe" in hover
+    data = c.call("textDocument/semanticTokens/full", {"textDocument": {"uri": uri}})["data"]
+    assert any(data[i + 4] & 2 for i in range(0, len(data), 5))
+    rng = {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 40}}
+    acts = c.call("textDocument/codeAction", {"textDocument": {"uri": uri}, "range": rng, "context": {"diagnostics": []}})
+    fix = next(a for a in acts if "wipe_exempt" in a["title"])
+    assert fix["edit"]["changes"][uri][0]["newText"] == "#[wipe_exempt] "
