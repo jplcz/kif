@@ -241,6 +241,15 @@ def _cmake_quote(v: object) -> str:
     return '"' + str(v).replace("\\", "/").replace('"', '\\"') + '"'
 
 
+def cmd_wipe_check(args: argparse.Namespace) -> int:
+    from . import wipecheck
+
+    flags = args.flags.split() if args.flags is not None else ["-O2"]
+    rows, problems = wipecheck.check(args.file, args.target, args.cc, flags, args.evidence, args.keep)
+    sys.stdout.write(wipecheck.render(rows, problems, flags))
+    return 1 if problems or any(not r.ok for r in rows) else 0
+
+
 def cmd_new(args: argparse.Namespace) -> int:
     from . import scaffold
 
@@ -532,6 +541,15 @@ def make_parser() -> "tuple":
     ir_.add_argument("-o", "--output", metavar="FILE", help="write here instead of standard output (required for cbor)")
     common(ir_)
     ir_.set_defaults(run=cmd_ir)
+
+    wc = sub.add_parser("wipe-check", help="compile the generated C to assembly with your flags and confirm every secure wipe survives (docs/kif-secure-wipe.md, stage 8)")
+    wc.add_argument("file")
+    wc.add_argument("--target", default="c", help="a built-in target name or .json file (default c)")
+    wc.add_argument("--cc", default="gcc", help="the C compiler (default gcc)")
+    wc.add_argument("--flags", metavar="FLAGS", help="compiler flags, one string (default -O2), e.g. --flags '-O3 -flto'")
+    wc.add_argument("--evidence", metavar="REGEX", help="a regular expression that matches one wipe in the assembly (default: an inline-asm barrier or a call to memset/explicit_bzero)")
+    wc.add_argument("--keep", metavar="DIR", help="keep the generated C and assembly here")
+    wc.set_defaults(run=cmd_wipe_check)
 
     d = sub.add_parser("doc", help="Markdown documentation")
     d.add_argument("files", nargs="+")

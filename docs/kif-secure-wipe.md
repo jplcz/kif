@@ -395,6 +395,26 @@ keeps the IR hash target-independent and the wipe policy in one place.
 
 - **`kif ir FILE --wipe-report`**: one page for a review, like `--taint-report`: every secure struct (fields wiped, fields exempt), every
   secure variable and its wipe sites, the functions marked `#[secure_wipe]`, and the exempt variables and fields.
+- **`kif wipe-check FILE [--target T] [--cc gcc] [--flags=-O2] [--evidence REGEX] [--keep DIR]`**: the object check (stage 8). kif does
+  not choose your compiler flags, so whether a wipe survives optimization is a fact about one build; this makes it visible. It lowers
+  the file, compiles the generated C to assembly with *your* compiler and flags, and for every function with wipe sites written in its
+  body requires at least as much evidence of wiping in that function's assembly as there are sites. Exit status 1 when a function has
+  fewer, or the C does not compile.
+
+  ```console
+  $ kif wipe-check demo.kif --flags=-O3                  # does every wipe survive -O3?
+  $ kif wipe-check demo.kif --flags="-O2 -flto" --cc clang
+  $ kif wipe-check demo.kif --target freebsd-kernel --evidence 'call\s+explicit_bzero'   # your own definition of "one wipe"
+  ```
+
+  *Evidence* (default): an inline-asm barrier (the check stamps a comment into each empty `asm volatile ("")` barrier so the compiler
+  prints it) or a call to `memset`/`bzero`/`explicit_bzero`-like symbols, whichever is more frequent; with `--evidence`, the number of
+  assembly lines matching your regular expression. *Rationale*: a barrier or a call to a non-elidable primitive is exactly what keeps
+  the store from being a dead store, and both are visible in the assembly whatever the instruction set. *Limits*: only wipes written
+  directly in a function body count (those in generated struct drops and `secure_vector` helpers depend on inlining); a function the
+  compiler inlined away has no symbol and is reported `-` (its wipes are in its callers); `#[secure_wipe(volatile)]` sites are not
+  counted (volatile stores are guaranteed by the C standard); a primitive the compiler expands into plain stores (small `memset`, a
+  builtin) shows no call, so for such a target give `--evidence`. *Opt out*: do not run it; nothing else depends on it.
 - **Module contracts** (docs/kif-module-contracts.md): the per-function record of a `.kifm` gains `secure_wipe` (the function wipes its
   trivial locals) so an importer can read the vendor's claim, and the secure-struct list names the types whose values are wiped. The
   checks are AST-level and recorded like `kept_checks`.
@@ -492,7 +512,7 @@ Stated plainly, because the feature is only useful when people know its limit:
 5. **C emission.** The call, the barrier and the comments of rule W7; the textual folder keeps it (rule W11). **Partly done**: `ir_c.wipe` emits `/* kif: secure wipe: ... */` and `KIF_SECURE_WIPE(&x, sizeof(x))`, the header defines the macro from `Target.wipe()` and includes its header, `KIFW006` is raised for a target that cannot wipe and for an array parameter. `#[secure_wipe(volatile)]` (on a let, parameter, fn or struct) sets `Local.wipe_volatile`, so the `Wipe` is `volatile` and C calls `KIF_SECURE_WIPE_VOLATILE`, defined from the target's `volatile_call`; any other argument is `KIFW004`. **Done.**
 6. **Guard.** Rule W11 (`KIFW010`). **Done** (`kiflang/wipeguard.py`): the pass manager snapshots the wipes before every `transform` pass and verifies after it that each is still present once, in its block, on the same side of every instruction that touches its slot (a removed neighbour is not a move); and `ir_c` checks that the printed C has as many `KIF_SECURE_WIPE` calls as the IR has `Wipe`s, so the text folder cannot drop or duplicate one. A function without wipes costs nothing.
 7. **Tools.** `--wipe-report`, contract and attestation fields, hover, semantic token, quick fix, notes `KIFW101`/`KIFW102`. **Partly done**: `kif ir FILE --wipe-report` (`wipes.report`), `KIFW101` (padding of a struct whose field sizes kif knows; natural 64-bit layout; generics, enums and pointers are not sized) and `KIFW102` (a direct copy of a secure variable into an unmarked named variable; reported by the `wipes` pass, so by `kif ir --passes default` and `kif lint`-style IR checks). The attestation hash already covers wipes. The `.kifm` security section records `secure_wipe` per function and `secure_wipe`/`wipe_exempt` per type (checked, KIF014 on mismatch), plus the informational `wipes` count. Editor: hover on a `#[secure_wipe]` fn or struct, the `secure` semantic token modifier on its name, and a `KIFW003` quick fix that inserts `#[wipe_exempt]`. Still to do: hover on secure locals (needs IR sites).
-8. **Constant-time/wipe harness.** Inspect the built object for a surviving wipe (next to the `ct` harness).
+8. **Object harness.** **Done** (`kiflang/wipecheck.py`, `kif wipe-check`, `tests/test_wipecheck.py`; section 8): compiles the generated C to assembly with the caller's flags and checks each function keeps as many wipes as it has sites. A bare `memset` target fails it at `-O2` (the call is removed as a dead store), the default target passes at `-O0`/`-O2`/`-O3`. Not done: inspecting a linked object or LTO output, which needs symbol-level knowledge of the final binary.
 
 ## 13. Alternatives considered
 

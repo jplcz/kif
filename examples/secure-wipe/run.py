@@ -7,7 +7,7 @@
     ./run.py [--target T]       demo.kif: lower, write everything to out/<target>/, compile driver.c, run it, compare with demo.out
                                 errors.kif: write its diagnostics
 
-Written to out/<target>/ (git-ignored): diagnostics.txt, demo.ir, wipe-report.txt, demo_proc.h/.c, kif_c.h, wipe-plan.txt, gcc.log, driver, driver.out.
+Written to out/<target>/ (git-ignored): diagnostics.txt, demo.ir, wipe-report.txt, wipe-check.txt, demo_proc.h/.c, kif_c.h, wipe-plan.txt, gcc.log, driver, driver.out.
 The summary printed at the end lists them; open them to read what the compiler generated.
 """
 
@@ -50,6 +50,8 @@ def run(target_name: str = "c") -> dict:
     (out / "demo.ir").write_text(ir.stdout + ir.stderr)
 
     (out / "wipe-report.txt").write_text(subprocess.run([sys.executable, "-m", "kiflang.kif", "ir", "--wipe-report", str(demo)], capture_output=True, text=True, cwd=HERE.parents[1]).stdout)
+    wc = subprocess.run([sys.executable, "-m", "kiflang.kif", "wipe-check", str(demo), "--target", target_name, "--flags=-O2"], capture_output=True, text=True, cwd=HERE.parents[1])
+    (out / "wipe-check.txt").write_text(wc.stdout + wc.stderr)
     p = t.wipe()
     (out / "wipe-plan.txt").write_text(f"macro   : {p.macro}\nbody    : {p.body}\nvolatile: {p.volatile_body}\nheader  : {p.header}\nerror   : {p.error or 'none'}\n")
 
