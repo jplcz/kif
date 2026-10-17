@@ -262,6 +262,17 @@ def test_wipe_report_lists_structs_variables_and_exemptions():
     assert "variable a (u32): 1 wipe(s)" in r and "f: b" in r and "total wipe sites: 1" in r
 
 
+def test_wipe_report_lists_secure_struct_variables():
+    from kiflang import ir, passes, symbols, wipes
+
+    m = symbols.analyze("/t/main.kif", STRUCT + "fn f() -> u32 { let a = key { k: [1, 2, 3, 4], n: 7 }; return eat(a); }", None)
+    mod = ir.build_module(m.tree)
+    for f in mod.functions:
+        passes.run_function(f, ["wipes"])
+    r = wipes.report(mod, m.tree, "t.kif")
+    assert "Secure struct variables" in r and "f: variable a (key): 1 moved-from wipe(s)" in r
+
+
 STRUCT = "#[secure_wipe]\nstruct key { k: [u8; 4], n: u32 }\nfn eat(k: key) -> u32 { return k.n; }\n"
 
 

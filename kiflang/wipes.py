@@ -200,6 +200,14 @@ def report(mod: ir.Module, tree, file: str) -> str:
             out.append(f"  {f.name}: {kind} {loc.name} ({loc.ty}{vol}): {len(mine)} wipe(s)")
             out += [f"    {file}:{line(w.site) if w.site is not None else '?'}: {w.why}" for w in mine]
     out.append(f"  total wipe sites: {total}")
+    out += ["", "Secure struct variables (wiped field by field by the struct's drop; a moved-from slot is wiped by kif_wipe_<S>):"]
+    for f in mod.functions:
+        sites = [i for _, i in f.instrs() if isinstance(i, ir.Wipe)]
+        for loc in (l for l in f.locals if l.secure_struct):
+            mine = [w for w in sites if w.local is loc]
+            kind = "parameter" if loc.param else "variable"
+            out.append(f"  {f.name}: {kind} {loc.name} ({loc.ty}): {len(mine)} moved-from wipe(s)")
+            out += [f"    {file}:{line(w.site) if w.site is not None else '?'}: {w.why}" for w in mine]
     exempt_lets = [(f.name, s) for f in mod.functions if f.node is not None and "secure_wipe" in f.attrs
                    for s in astutil.walk(f.node.body) if isinstance(s, ast.Let) and has(s.attrs, "wipe_exempt")]
     out += ["", f"Exempt variables (#[wipe_exempt]): {len(exempt_lets)}"]
