@@ -72,3 +72,21 @@ def test_demo_frames():
     spec.loader.exec_module(mod)
     r = mod.run()
     assert {k: r["frames"][k] for k in ("leaf", "buffer", "wrap", "external_cost", "generic")} == {"leaf": 32, "buffer": 544, "wrap": 96, "external_cost": 512, "generic": None}
+
+
+def test_liveness_is_the_peak_not_the_sum():
+    """`stack.share = "liveness"`: variables of disjoint scopes share a slot; the frame is the peak of those live at once."""
+    src = ("fn work() -> u32 { let mut r: u32 = 0;\n"
+           "  if r == 0 { let a: [u8; 600] = [0; 600]; r = a[1] as u32; } else { let b: [u8; 800] = [0; 800]; r = b[2] as u32; }\n"
+           "  let c: [u8; 400] = [0; 400]; r + c[3] as u32 }\n")
+    m = symbols.analyze("/t/m.kif", src, None)
+    built = ir.build_module(m.tree)
+    for f in built.functions:
+        passes.run_function(f, passes.pipeline("default"))
+    sizes = {s: stack.frames(built, m.tree.items, PLAN._replace(share=s))[0].size for s in ("sum", "liveness")}
+    assert sizes["liveness"] < sizes["sum"]
+    assert sizes["liveness"] >= 2 * 800  # the larger branch, with its temporary, is live at once
+    # one variable alive for the whole call is never shared away
+    one = "fn f() -> u32 { let a: [u8; 600] = [0; 600]; a[1] as u32 }"
+    assert frames(one)["f"].size >= 600
+    assert target.load("c").stack().share == "sum"

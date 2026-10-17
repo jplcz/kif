@@ -274,7 +274,7 @@ def cmd_stack_check(args: argparse.Namespace) -> int:
     from . import stackcheck
 
     flags = args.flags.split() if args.flags is not None else ["-O2"]
-    rows, problems = stackcheck.check(args.file, args.target, args.cc, flags, args.keep, args.su or None, args.cfg, args.profile, args.sanitize, args.include)
+    rows, problems = stackcheck.check(args.file, args.target, args.cc, flags, args.keep, args.su or None, args.cfg, args.profile, args.sanitize, args.include, _sysroot(args))
     sys.stdout.write(stackcheck.render(rows, problems, args.cc if not args.su else "the build's compiler", flags if not args.su else ["from .su files"]))
     return 1 if problems or any(r.verdict == "UNDER" for r in rows) else 0
 
@@ -592,6 +592,8 @@ def make_parser() -> "tuple":
     sc.add_argument("--profile", metavar="P", help="the profile the build lowered with")
     sc.add_argument("--sanitize", action="append", metavar="LIST", help="the sanitizers the build lowered with")
     sc.add_argument("--cfg", action="append", default=[], metavar="OPT", help="`flag` or `key=value`, as the build passed to kifc")
+    sc.add_argument("--sysroot", metavar="DIR", help="the only place `import` reads from, as the build passed to kifc (then -I is not used)")
+    signpolicy.add_options(sc)
     sc.add_argument("-I", dest="include", action="append", default=[], metavar="DIR", help="import directory, as the build passed to kifc")
     sc.set_defaults(run=cmd_stack_check)
 

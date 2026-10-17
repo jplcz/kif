@@ -514,7 +514,7 @@ function(kif_stack_check name)
         set(target_args)
     endif()
     # stack-check takes only the options that decide what the lowered code is
-    set(keep --target --profile --cfg --sanitize -I)
+    set(keep --target --profile --cfg --sanitize -I --sysroot)
     set(args)
     set(all_args ${base_args} ${target_args})
     list(LENGTH all_args n)

@@ -10,8 +10,9 @@ frame *unknown* (never 0). `#[stack(N)]` replaces the estimate with N. The call 
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from . import ir, irtypes, layout
 from .irtypes import parse_type
@@ -46,12 +47,60 @@ def _up(n: int, align: int) -> int:
     return n + (-n % align)
 
 
+def _ranges(fn: ir.Function):
+    """Live ranges in instruction order (terminators count as one position): `(locals, temps)`, each `{id: (first, last)}`.
+    A slot lives from its first mention to its last scope exit (`Dead`), a parameter for the whole function, a temporary from its
+    definition to its last use. The reference a `Borrow` hands out cannot outlive the slot's `Dead` (the borrow checker), so the scope
+    end covers every use through a reference."""
+    first: Dict[int, int] = {}
+    last: Dict[int, int] = {}
+    tfirst: Dict[int, int] = {}
+    tlast: Dict[int, int] = {}
+    pos = 0
+    for b in fn.blocks:
+        for i in b.instrs:
+            pos += 1
+            for f in dataclasses.fields(i):
+                v = getattr(i, f.name, None)
+                if isinstance(v, ir.Local):
+                    first.setdefault(v.id, pos)
+                    last[v.id] = max(last.get(v.id, pos), pos)
+            d = i.defs()
+            if d is not None:
+                tfirst.setdefault(d.id, pos)
+                tlast[d.id] = max(tlast.get(d.id, pos), pos)
+            for u in i.uses():
+                if isinstance(u, ir.Temp):
+                    tlast[u.id] = max(tlast.get(u.id, pos), pos)
+        pos += 1
+        if b.term is not None:
+            for u in b.term.uses():
+                if isinstance(u, ir.Temp):
+                    tlast[u.id] = max(tlast.get(u.id, pos), pos)
+    end = pos
+    locs = {l.id: (0 if l.param else first.get(l.id, 0), end if l.param else last.get(l.id, 0)) for l in [*fn.params, *fn.locals]}
+    return locs, {t: (tfirst[t], tlast[t]) for t in tfirst}
+
+
+def _peak(items: List[Tuple[int, int, int]]) -> int:
+    """The most bytes live at once, for `(bytes, first, last)` ranges that include both ends."""
+    events = sorted([(a, 0, n) for n, a, _ in items] + [(b, 1, -n) for n, _, b in items])
+    cur = best = 0
+    for _, _, d in events:
+        cur += d
+        best = max(best, cur)
+    return best
+
+
 def frame(fn: ir.Function, plan: StackPlan, table) -> Frame:
     line = fn.node.range.start.line + 1 if fn.node is not None else 0
     n = declared_stack(fn)
     if n is not None:
         return Frame(fn.name, n, "declared", declared=True, line=line)
     total, parts, unknown = 0, [], []
+    live = plan.share == "liveness"
+    locs, temps = _ranges(fn) if live else ({}, {})
+    spans: List[Tuple[int, int, int]] = []  # (bytes, first, last) of every counted variable, for `liveness`
     for loc in fn.locals:
         sa = layout.size_align(loc.type, plan, table)
         if sa is None:
@@ -59,6 +108,8 @@ def frame(fn: ir.Function, plan: StackPlan, table) -> Frame:
             continue
         total += _up(total, sa[1]) - total + sa[0]
         parts.append((loc.name, sa[0]))
+        if live:
+            spans.append((_up(sa[0], sa[1]), *locs.get(loc.id, (0, 0))))
     counted = unsized = 0
     stored = {i.src.id: i.local for _, i in fn.instrs() if isinstance(i, ir.Store) and isinstance(i.src, ir.Temp)}  # a temp stored into a slot has that slot's type
     for _, i in fn.instrs():
@@ -81,9 +132,13 @@ def frame(fn: ir.Function, plan: StackPlan, table) -> Frame:
             total += _up(total, sa[1]) - total + sa[0]
             counted += 1
             parts.append((f"<temp {t.id}>", sa[0]))
+            if live:
+                spans.append((_up(sa[0], sa[1]), *temps.get(t.id, (0, 0))))
     parts.sort(key=lambda p: -p[1])
     if unknown:
         return Frame(fn.name, None, "cannot size " + ", ".join(unknown), parts, counted, unsized, line=line)
+    if live:
+        total = _peak(spans)
     return Frame(fn.name, _up(total, plan.align) + plan.frame_overhead, "", parts, counted, unsized, line=line)
 
 

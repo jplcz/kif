@@ -90,7 +90,7 @@ def resolve(items, tree, cli: Optional[int], cli_set: bool, plan: StackPlan) -> 
 
 
 def check(ds: List[Depth], budgets: Dict[str, Budget]) -> List[dg.Diagnostic]:
-    """`KIFP084` for a variable bigger than the budget, `KIFW010` for a depth over it. Functions without a budget are not checked."""
+    """`KIFP084` for a variable bigger than the budget, `KIFW010` for a depth over it, `KIFW015` (a note) for a function with its own budget and no sizable frame. Functions without a budget are not checked."""
     by_name = {d.name: d for d in ds}
     out: List[dg.Diagnostic] = []
     for d in ds:
@@ -98,6 +98,10 @@ def check(ds: List[Depth], budgets: Dict[str, Budget]) -> List[dg.Diagnostic]:
         if b is None or b.limit is None or d.node is None:
             continue
         rng = d.node.name.range
+        if d.frame is None and b.source.startswith("this function's"):
+            out.append(dg.info(rng, "KIFW015", f"{d.name}() has #[small_stack({b.limit})] but its frame cannot be sized (a generic or an unsizable type), so the budget is not checked; "
+                                               "give it #[stack(N)] or check the instances"))
+            continue
         for name, size in d.parts:
             if not name.startswith("<temp") and size > b.limit:
                 out.append(dg.error(rng, "KIFP084", f"{d.name}(): variable '{name}' is {size} bytes, more than the whole stack budget of {b.limit} bytes ({b.source}); "

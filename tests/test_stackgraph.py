@@ -75,3 +75,37 @@ def test_demo_depths():
     assert r["depths"]["level1"] == 32 + 32 + 32 + 200 and r["depths"]["leaf"] == 32
     assert r["recursion"] == {"countdown": None, "ping": None, "pong": None, "caller_of_recursion": None}
     assert r["recursion_codes"] == ["KIFP032"]
+
+
+def test_generated_helpers_and_drop_glue_are_hidden_callees():
+    """A vector helper (`try_push`, ...) and the drop glue of a vector are functions in the generated C: the depth counts them below the caller,
+    at the cost the target's backend gives them (kiflang/stackhelpers.py), and `stack.helper_frame` replaces that."""
+    src = ("fn build(n: usize) -> result<u32> { let mut v: vector<u32> = vector::try_create(n)?; v.try_push(3)?; ok(v[0]) }\n"
+           "fn plain(x: u32) -> u32 { x }\n")
+    d, _ = depths(src)
+    assert d["build"].chain[1].startswith(stackgraph.HELPER) and "vector.try_push" in d["build"].chain[1]
+    assert d["build"].depth == d["build"].frame + PLAN.helpers["vector.try_push"] and PLAN.helpers["vector.try_push"] > 0
+    assert d["plain"].chain == ["plain"]
+
+    def with_plan(plan):
+        m = symbols.analyze("/t/m.kif", src, None)
+        built = ir.build_module(m.tree)
+        for f in built.functions:
+            passes.run_function(f, passes.pipeline("default"))
+        return {x.name: x for x in stackgraph.analyze(built, m.tree.items, plan, m.tree)}["build"]
+
+    fixed = with_plan(PLAN._replace(helper_frame=500, drop_frame=0))
+    assert fixed.depth == fixed.frame + 500
+    # a backend with no estimator (C++: kif has no C++ backend) cannot say: the depth is a lower bound, and the note says why
+    blind = with_plan(PLAN._replace(helpers=None, drops=None))
+    assert blind.depth == blind.frame and any("no stack estimator" in x for x in blind.incomplete)
+
+
+def test_helper_costs_come_from_the_generated_code():
+    """The C estimator reads the helpers `lower_c` writes: `try_push` calls `grow` calls `try_reserve`, so it costs more than any of them alone."""
+    h = PLAN.helpers
+    assert h["vector.try_push"] > h["vector.grow"] > h["vector.try_reserve"] > 0
+    assert PLAN.drops["vector"] > 0 and "str.try_append" in h
+    from kiflang import stackhelpers
+    assert stackhelpers.estimate(target.load("c"), PLAN) == stackhelpers.Costs(PLAN.helpers, PLAN.drops)
+    assert stackhelpers.ESTIMATORS.keys() == {"c"}  # `cxx` has none yet

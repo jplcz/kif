@@ -1926,6 +1926,7 @@ Prefix `KIFP`, so they never collide with `KIFnnn` or `KIFLnnn`.
 | KIFP085 | `#[unsafe(relocatable)]` on a `#[heap]` struct or on a struct that implements an interface. |
 | KIFP084 | A single local or by-value parameter is larger than the `small_stack` limit. |
 | KIFW010 | The stack depth of a function (its frame plus the deepest callee chain) is over its `small_stack` budget (docs/kif-stack.md). |
+| KIFW015 | A function with its own `#[small_stack]` whose frame cannot be sized (a generic) is not checked against it (note). |
 | KIFW016 | `#[small_stack]` takes one positive byte count or `off`. |
 | KIFP080 | `#[heap]` struct used by value as a local, parameter, result or field of a non-heap struct. |
 | KIFP081 | Move of a `#[heap]` struct value. |

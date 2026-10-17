@@ -133,7 +133,9 @@ a loop in `extends` is an error. Check with `kif target check`; show the result 
 | `stack.pointer_bits` | 16, 32, 64 | Size of a pointer for `ptr<T>`, `&T`, slices, vectors. Default 64. |
 | `stack.align` | power of two | Frames are rounded up to this. Default 16. |
 | `stack.frame_overhead` | integer | Bytes per call besides the locals (return address, saved frame pointer). Default 16. |
-| `stack.share` | `sum` | `sum` (default): the locals of a function add up. `liveness` (the peak of the locals live at once) is designed but not implemented. |
+| `stack.helper_frame` | integer | One cost, in bytes, for every generated vector/string helper below its caller, nested helpers included. Unset (default): the estimate of the target's backend (`kiflang/stackhelpers.py`; none for `cxx` targets, whose hidden cost is then unknown and the depth a lower bound). |
+| `stack.drop_frame` | integer | Likewise for the generated drop glue of a vector, string, optional or pointer. Unset: the backend's estimate. |
+| `stack.share` | `sum` | `sum` (default): the locals of a function add up. `liveness`: the peak of the variables live at once (a slot lives from its first mention to its last scope exit, a parameter for the whole call, a temporary from its definition to its last use). Use it when your compiler reuses slots of disjoint scopes (GCC does, even at `-O0`; clang `-O0` does not, so `sum` stays the safe upper bound there). |
 | `stack.default_budget` | integer or null | Bytes; the default for `--small-stack`. Default null (no budget). |
 | `wipe.macro` | identifier | Name of the greppable macro every wipe is emitted through. Default `KIF_SECURE_WIPE`. |
 | `wipe.volatile_call` | text | Wipe for `#[secure_wipe(volatile)]`, `{n}` bytes at `{p}`; default a `volatile unsigned char` loop. |

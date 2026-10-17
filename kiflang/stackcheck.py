@@ -80,17 +80,17 @@ def read_su(paths: List[str]) -> Tuple[Dict[str, Tuple[int, str]], List[str]]:
 
 
 def check(path: str, target: str = "c", cc: str = "gcc", flags: Optional[List[str]] = None, keep: Optional[str] = None, su: Optional[List[str]] = None,
-          cfg: Optional[List[str]] = None, profile: Optional[str] = None, sanitize: Optional[List[str]] = None, include: Optional[List[str]] = None) -> Tuple[List[Row], List[str]]:
+          cfg: Optional[List[str]] = None, profile: Optional[str] = None, sanitize: Optional[List[str]] = None, include: Optional[List[str]] = None, sysroot=None) -> Tuple[List[Row], List[str]]:
     """`(one row per function the estimate covers, problems)`; a problem is a file that does not lower or compile.
 
     `su` (files or directories) reads the `.su` files of a build that already compiled the generated C, so the frames are those of the
     project's own compiler and flags; without it the check compiles the C itself with `cc flags`. `cfg`, `profile`, `sanitize` and
-    `include` must be the ones the build lowered with (they decide which code exists)."""
+    `include` and `sysroot` (a `sysroot.Sysroot`, the only place imports read from) must be the ones the build lowered with (they decide which code exists)."""
     t = targetdef.load(target)
     with open(path, encoding="utf-8") as f:
         src = f.read()
     sans = [x for o in sanitize or [] for x in o.split(",") if x] or None
-    m = analyze(path, src, kifc.import_resolver(include or []), cfg_env=t.cfg_env(cfg or [], profile, sans))
+    m = analyze(path, src, None if sysroot else kifc.import_resolver(include or []), sysroot=sysroot, cfg_env=t.cfg_env(cfg or [], profile, sans))
     errs = [d for d in m.diagnostics if d.severity == 1]
     if errs:
         return [], [f"{path}:{d.range.start.line + 1}: {d.code}: {d.message}" for d in errs]
@@ -139,7 +139,9 @@ def check(path: str, target: str = "c", cc: str = "gcc", flags: Optional[List[st
                 break
             su_file = os.path.join(d, name[:-2] + ".su")
             if r.returncode != 0:
-                problems.append(f"{name}: {cc} failed: {r.stderr.strip().splitlines()[-1] if r.stderr.strip() else r.returncode}")
+                errors = [x for x in r.stderr.splitlines() if "error" in x]
+                hint = " (an imported kif module is not compiled here: build it and use --su)" if any("_proc.h" in x for x in errors) else ""
+                problems.append(f"{name}: {cc} failed: {(errors or r.stderr.strip().splitlines() or [str(r.returncode)])[0].strip()}{hint}")
             elif not os.path.exists(su_file):
                 problems.append(f"{name}: {cc} wrote no .su file: -fstack-usage is not supported by this compiler")
             else:
@@ -167,7 +169,10 @@ def check(path: str, target: str = "c", cc: str = "gcc", flags: Optional[List[st
             total = 0
             for c in x.chain:
                 s = symbols.get(c)
-                if s in measured and c in by_name:
+                if c not in by_name:  # generated helpers and drop glue: their frames are in the .su file under many names; the estimate stands
+                    total += stackgraph.hidden_cost(plan, c) or 0
+                    row.mixed = True
+                elif s in measured:
                     total += measured[s][0]
                 else:
                     total += by_name[c].frame or 0

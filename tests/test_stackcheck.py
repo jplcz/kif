@@ -93,3 +93,29 @@ def test_parse_su_gcc_clang_and_clones(tmp_path):
     assert got["f"][0] == 96 and got["g"][0] == 16 and got["h"][0] == 24
     _, problems = stackcheck.read_su([str(tmp_path / "none")])
     assert problems
+
+
+def test_sysroot_import_with_su(tmp_path):
+    """--sysroot is the only place imports read from; an imported module is not compiled here, so its build's .su files are used."""
+    from kiflang import stackcheck, sysroot
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "h.kif").write_text("pub fn helper() -> i32 { 7 }\n")
+    (root / "reloco.kif").write_text((Path(stackcheck.__file__).parent / "prelude" / "reloco.kif").read_text())
+    (tmp_path / "m.kif").write_text('import "h.kif";\nuse h::helper;\nfn top() -> i32 { helper() }\n')
+    (tmp_path / "m_proc.c.su").write_text("m.kif:3:10:m_top\t16\tstatic\n")
+    rows, problems = stackcheck.check(str(tmp_path / "m.kif"), su=[str(tmp_path)], sysroot=sysroot.Sysroot(str(root)))
+    assert not problems and [r.name for r in rows] == ["top"]
+    rows, problems = stackcheck.check(str(tmp_path / "m.kif"), su=[str(tmp_path)])
+    assert problems and "not found" in problems[0]
+    rows, problems = stackcheck.check(str(tmp_path / "m.kif"), cc="gcc", sysroot=sysroot.Sysroot(str(root)))
+    assert any("use --su" in p for p in problems)
+
+
+@needs_gcc
+def test_vector_helpers_are_counted_below_the_caller(tmp_path):
+    """The generated vector helpers use stack of their own: with them as hidden callees the chain covers the compiler's at -O1 -fno-inline."""
+    src = "fn build(n: usize) -> result<u32> { let mut v: vector<u32> = vector::try_create(n)?; v.try_push(3)?; ok(v[0]) }\n"
+    rows, problems = run(tmp_path, ["-O1", "-fno-inline", "-fno-stack-protector"], src)
+    assert not problems and rows["build"].verdict == "ok"
+    assert rows["build"].depth_estimate == rows["build"].depth_measured and rows["build"].mixed

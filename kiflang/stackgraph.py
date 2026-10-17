@@ -38,6 +38,32 @@ class Depth:
         return self.depth is None
 
 
+HELPER = "<generated helper "  # `<generated helper try_push>`: a function the backend writes (`kif_vec_u32_try_push`); its cost is the backend's (stackhelpers.py)
+DROP = "<generated drop glue "  # `<generated drop glue vector>`: `kif_vec_u32_drop`, `kif_str_drop`, ...
+LEAF_TRY = {"try_at", "try_slice", "try_value", "try_get", "try_front", "try_back"}  # accessors: inline, no frame worth counting
+GLUE_TYPES = {"vector", "secure_vector", "str", "optional", "ptr"}
+
+
+def hidden_cost(plan: StackPlan, name: str) -> Optional[int]:
+    """What the generated function named by a hidden node costs below its caller on this target, None when the backend cannot say."""
+    from . import stackhelpers
+
+    if name.startswith(HELPER):
+        return stackhelpers.helper_cost(plan, name[len(HELPER):-1])
+    return stackhelpers.drop_cost(plan, name[len(DROP):-1])
+
+
+def _receiver(c: ir.Call) -> str:
+    """The type a helper call works on: the (dereferenced) receiver, or the `vector` of `vector::try_create`."""
+    v = c.recv
+    if v is not None and getattr(v, "ty", None):
+        t = v.type
+        while t.kind == "ref" and t.args:
+            t = t.args[0]
+        return t.name or ""
+    return c.callee.split("::")[0] if "::" in c.callee else ""
+
+
 def _callees(fn: ir.Function, key: str, table: Dict[str, object], notes: List[str]) -> List[str]:
     out: List[str] = []
     for _, i in fn.instrs():
@@ -54,11 +80,18 @@ def _callees(fn: ir.Function, key: str, table: Dict[str, object], notes: List[st
                     target = i.decl
                 else:
                     notes.append(f"{i.decl}() is not declared in this module")
-            # an empty `decl` on a free/method/assoc call is a prelude or intrinsic helper: inline code, no frame of its own
+            # an empty `decl` on a free/method/assoc call is a prelude or intrinsic helper: inline code, except the ones the C backend writes as functions
+            if not i.decl and i.kind != "value" and i.callee.rsplit("::", 1)[-1].startswith("try_") and i.callee.rsplit("::", 1)[-1] not in LEAF_TRY:
+                op = i.callee.rsplit("::", 1)[-1]
+                rt = _receiver(i)
+                family = "str" if rt == "str" else "vector" if rt in ("vector", "secure_vector") else ""
+                target = f"{HELPER}{family + '.' if family else ''}{op}>"
         elif isinstance(i, (ir.Dead, ir.Release)) and i.drop:
             ty = (i.local if isinstance(i, ir.Dead) else i.value).type
             if ty.kind == "named" and f"{ty.name}::drop" in table:
                 target = f"{ty.name}::drop"
+            elif ty.kind == "named" and ty.name in GLUE_TYPES:
+                target = f"{DROP}{'vector' if ty.name in ('vector', 'secure_vector') else ty.name}>"
         if target is not None and target not in out:
             out.append(target)
     return out
@@ -138,6 +171,10 @@ def analyze(built: ir.Module, items, plan: StackPlan, tree=None) -> List[Depth]:
             own[key] = n or 0
             notes[key] = [] if n is not None else [f"{key}() has no #[stack(N)]"]
             edges[key] = []
+    for name in sorted({c for cs in edges.values() for c in cs if c.startswith((HELPER, DROP))}):
+        cost = hidden_cost(plan, name)
+        own[name], edges[name] = cost or 0, []
+        notes[name] = [] if cost is not None else [f"{name[1:-1]}: the backend of this target has no stack estimator (set stack.helper_frame / stack.drop_frame)"]
     comps = _sccs(list(own), edges)
     cyclic: Dict[str, List[str]] = {}
     for c in comps:

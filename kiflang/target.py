@@ -201,7 +201,9 @@ _SPEC: Dict[str, Any] = {
         "pointer_bits": (lambda v: v in (16, 32, 64), "the size of a pointer in bits, 16, 32 or 64 (default 64)"),
         "align": (lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0 and v & (v - 1) == 0, "frames are rounded up to this power of two (default 16)"),
         "frame_overhead": (lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0, "bytes per call besides the locals: return address and saved frame pointer (default 16)"),
-        "share": (lambda v: v == "sum", "`sum` (default): all locals of a function add up (`liveness`, the peak of the locals live at once, is not implemented yet)"),
+        "share": (lambda v: v in ("sum", "liveness"), "`sum` (default): all locals of a function add up; `liveness`: the peak of the locals live at once"),
+        "helper_frame": (lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0, "bytes the generated vector/string helpers use below their caller, nested calls included (default: what the target's backend writes, kiflang/stackhelpers.py)"),
+        "drop_frame": (lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0, "bytes the generated drop glue of a vector, string or optional uses below its caller (default: the backend's estimate)"),
         "default_budget": (lambda v: v is None or (isinstance(v, int) and not isinstance(v, bool) and v > 0), "bytes, the default for --small-stack; null: no budget"),
     },
     "alloc": {  # the whole section may be null: no allocator, nothing that allocates can be synthesized
@@ -366,6 +368,10 @@ class StackPlan(NamedTuple):
     frame_overhead: int
     share: str
     default_budget: Optional[int]
+    helper_frame: Optional[int] = None  # `stack.helper_frame`: one cost for every generated helper, replacing the backend's estimate
+    drop_frame: Optional[int] = None  # `stack.drop_frame`: likewise for the generated drop glue
+    helpers: Optional[Dict[str, int]] = None  # the backend's estimate per helper operation (kiflang/stackhelpers.py); None: no estimator
+    drops: Optional[Dict[str, int]] = None  # ... and per dropped type
 
 
 class Target:
@@ -499,7 +505,12 @@ class Target:
     def stack(self) -> "StackPlan":
         """The stack-estimate parameters with the defaults applied (docs/kif-stack.md section 9)."""
         s = self.data.get("stack") or {}
-        return StackPlan(s.get("pointer_bits", 64), s.get("align", 16), s.get("frame_overhead", 16), s.get("share", "sum"), s.get("default_budget"))
+        from . import stackhelpers
+
+        plan = StackPlan(s.get("pointer_bits", 64), s.get("align", 16), s.get("frame_overhead", 16), s.get("share", "sum"), s.get("default_budget"),
+                         s.get("helper_frame"), s.get("drop_frame"))
+        costs = stackhelpers.estimate(self, plan)
+        return plan._replace(helpers=costs.ops, drops=costs.drops)
 
     def alloc(self, which: str, **args: str) -> Optional[str]:
         """The allocator text (`malloc`, `zalloc`, `realloc`, `free`, `aligned`) with its placeholders filled; None when the

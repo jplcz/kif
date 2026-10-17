@@ -102,3 +102,11 @@ def test_kifc_small_stack(tmp_path):
     assert rc == 0 and "KIFW010" in err and "KIFP084" not in err
     assert kifc_run(tmp_path, "--small-stack=1100", "--Werror")[0] == 1
     assert kifc_run(tmp_path, "--small-stack=0")[0] == 2
+
+
+def test_kifw015_budget_on_unsizable_function():
+    """KIFW015: a function with its own #[small_stack] whose frame cannot be sized is not checked, and says so; a sized one is."""
+    got = codes("#[small_stack(100)]\nfn id<T>(x: T) -> T { x }\n")
+    assert [c for c, _ in got] == ["KIFW015"]
+    assert codes("#[small_stack(100)]\nfn f() -> i32 { 1 }\n") == []
+    assert codes("fn id<T>(x: T) -> T { x }\n", cli=100, cli_set=True) == []

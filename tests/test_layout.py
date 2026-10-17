@@ -44,8 +44,8 @@ def test_pointer_width_comes_from_the_target(tmp_path):
 
 
 def test_stack_section_defaults_and_validation(tmp_path):
-    assert tuple(PLAN) == (64, 16, 16, "sum", None)
-    for bad in ({"align": 3}, {"share": "liveness"}, {"pointer_bits": 24}, {"default_budget": 0}, {"frame_overhead": -1}):
+    assert tuple(PLAN)[:7] == (64, 16, 16, "sum", None, None, None)
+    for bad in ({"align": 3}, {"share": "peak"}, {"pointer_bits": 24}, {"default_budget": 0}, {"frame_overhead": -1}):
         t = tmp_path / "bad.json"
         t.write_text(json.dumps({"name": "bad", "extends": "c", "stack": bad}))
         with pytest.raises(target.TargetError):
