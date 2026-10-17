@@ -18,12 +18,13 @@
 # Per-target settings (win over the build-wide ones below): keywords of add_kif_library()/kif_target_sources(), and for an existing
 # target the properties of the same name, read by kif_target_sources():
 #   KIF_TARGET KIF_PROFILE KIF_SYSROOT KIF_SANITIZE KIF_CFG KIF_INCLUDE_DIRECTORIES KIF_WERROR
+#   KIF_SMALL_STACK   (the default stack budget in bytes, or off; --small-stack, docs/kif-stack.md)
 #   KIF_TRUST KIF_REVOKED KIF_SIGNING   (the signing policy for precompiled .kifm imports, docs/kif-module-contracts.md section 11.3)
 #   set_target_properties(mod PROPERTIES KIF_TARGET freebsd-kernel KIF_CFG "smp")  then  kif_target_sources(mod SOURCES x.kif BACKEND c)
 #
 # Build-wide defaults for every `kifc` run (an explicit KIFC_ARGS wins; -D on the command line wins over kif.toml):
 #   KIF_TARGET  KIF_PROFILE  KIF_SANITIZE  KIF_CFG  KIF_INCLUDE_DIRS  KIF_SYSROOT  KIF_WERROR
-#   KIF_TRUST  KIF_REVOKED (PEM files, relative to the calling directory)  KIF_SIGNING (off|warn|require)  KIF_PROVER (any|same)
+#   KIF_SMALL_STACK (bytes or off)  KIF_TRUST  KIF_REVOKED (PEM files, relative to the calling directory)  KIF_SIGNING (off|warn|require)  KIF_PROVER (any|same)
 # The trust and revocation files are dependencies of every generated file, so changing one re-runs the checks.
 # KIF_PROFILE defaults to a mapping of CMAKE_BUILD_TYPE: Debug -> debug, RelWithDebInfo -> perf, Release/MinSizeRel -> release.
 # `kifc` is always run with --no-project: the build is described by CMake, never by whichever kif.toml is nearest to the build tree.
@@ -64,6 +65,7 @@ function(_kif_base_args out)
             endif()
         endif()
         string(TOLOWER "${key}" opt)
+        string(REPLACE "_" "-" opt "${opt}")
         if(NOT value STREQUAL "")
             list(APPEND args --${opt} "${value}")
         endif()
@@ -87,13 +89,14 @@ function(_kif_base_args out)
             list(APPEND args --${opt} "${v}")
         endforeach()
     endforeach()
-    foreach(key IN ITEMS SIGNING PROVER)
+    foreach(key IN ITEMS SIGNING PROVER SMALL_STACK)
         if(DEFINED KIF_${key})
             set(value "${KIF_${key}}")
         else()
             set(value "${KIF_PROJECT_${key}}")
         endif()
         string(TOLOWER "${key}" opt)
+        string(REPLACE "_" "-" opt "${opt}")
         if(NOT value STREQUAL "")
             list(APPEND args --${opt} "${value}")
         endif()
@@ -154,9 +157,9 @@ endfunction()
 # Each setting is a keyword of add_kif_library()/kif_target_sources() or, when `tgt` already exists, the target property of the same
 # name (set_target_properties(tgt PROPERTIES KIF_TARGET freebsd-kernel KIF_CFG "smp;debug_locks")). A keyword beats the property.
 function(_kif_property_args out tgt)
-    cmake_parse_arguments(P "KIF_WERROR" "KIF_TARGET;KIF_PROFILE;KIF_SYSROOT;KIF_SIGNING" "KIF_SANITIZE;KIF_CFG;KIF_INCLUDE_DIRECTORIES;KIF_TRUST;KIF_REVOKED" ${ARGN})
+    cmake_parse_arguments(P "KIF_WERROR" "KIF_TARGET;KIF_PROFILE;KIF_SYSROOT;KIF_SIGNING;KIF_SMALL_STACK" "KIF_SANITIZE;KIF_CFG;KIF_INCLUDE_DIRECTORIES;KIF_TRUST;KIF_REVOKED" ${ARGN})
     set(args)
-    foreach(key IN ITEMS KIF_TARGET KIF_PROFILE KIF_SYSROOT KIF_SANITIZE KIF_CFG KIF_INCLUDE_DIRECTORIES KIF_TRUST KIF_REVOKED KIF_SIGNING)
+    foreach(key IN ITEMS KIF_TARGET KIF_PROFILE KIF_SYSROOT KIF_SANITIZE KIF_CFG KIF_INCLUDE_DIRECTORIES KIF_TRUST KIF_REVOKED KIF_SIGNING KIF_SMALL_STACK)
         set(values "${P_${key}}")
         if(values STREQUAL "" AND tgt AND TARGET ${tgt})
             get_target_property(values ${tgt} ${key})
@@ -169,6 +172,7 @@ function(_kif_property_args out tgt)
         else()
             string(REPLACE "KIF_" "--" opt "${key}")
             string(TOLOWER "${opt}" opt)
+            string(REPLACE "_" "-" opt "${opt}")
         endif()
         foreach(v IN LISTS values)
             if(key MATCHES "^KIF_(TRUST|REVOKED)$")
@@ -329,11 +333,11 @@ endfunction()
 
 # Compiles the sources of a library. The C++ backend yields `<stem>_if.hpp/.cpp`; FreeBSD yields `<stem>_if.h/.c` and `<stem>_enums.h`.
 function(add_kif_library name)
-    cmake_parse_arguments(A "WERROR;KIF_WERROR" "OUTPUT_DIR;TYPE;VISIBILITY;KIF_TARGET;KIF_PROFILE;KIF_SYSROOT;KIF_SIGNING"
+    cmake_parse_arguments(A "WERROR;KIF_WERROR" "OUTPUT_DIR;TYPE;VISIBILITY;KIF_TARGET;KIF_PROFILE;KIF_SYSROOT;KIF_SIGNING;KIF_SMALL_STACK"
                           "SOURCES;BACKENDS;INCLUDE_DIRS;LINK_LIBRARIES;CHECK_WITH;KIFC_ARGS;KIF_SANITIZE;KIF_CFG;KIF_INCLUDE_DIRECTORIES;KIF_TRUST;KIF_REVOKED" ${ARGN})
     set(prop_args KIF_TARGET "${A_KIF_TARGET}" KIF_PROFILE "${A_KIF_PROFILE}" KIF_SYSROOT "${A_KIF_SYSROOT}"
         KIF_SANITIZE ${A_KIF_SANITIZE} KIF_CFG ${A_KIF_CFG} KIF_INCLUDE_DIRECTORIES ${A_KIF_INCLUDE_DIRECTORIES}
-        KIF_TRUST ${A_KIF_TRUST} KIF_REVOKED ${A_KIF_REVOKED} KIF_SIGNING "${A_KIF_SIGNING}")
+        KIF_TRUST ${A_KIF_TRUST} KIF_REVOKED ${A_KIF_REVOKED} KIF_SIGNING "${A_KIF_SIGNING}" KIF_SMALL_STACK "${A_KIF_SMALL_STACK}")
     if(A_KIF_WERROR)
         list(APPEND prop_args KIF_WERROR)
     endif()
@@ -431,7 +435,7 @@ function(add_kif_library name)
         KIF_MANIFEST "${manifest}"
         KIF_TARGET "${A_KIF_TARGET}" KIF_PROFILE "${A_KIF_PROFILE}" KIF_SYSROOT "${A_KIF_SYSROOT}"
         KIF_SANITIZE "${A_KIF_SANITIZE}" KIF_CFG "${A_KIF_CFG}" KIF_INCLUDE_DIRECTORIES "${A_KIF_INCLUDE_DIRECTORIES}"
-        KIF_TRUST "${A_KIF_TRUST}" KIF_REVOKED "${A_KIF_REVOKED}" KIF_SIGNING "${A_KIF_SIGNING}"
+        KIF_TRUST "${A_KIF_TRUST}" KIF_REVOKED "${A_KIF_REVOKED}" KIF_SIGNING "${A_KIF_SIGNING}" KIF_SMALL_STACK "${A_KIF_SMALL_STACK}"
         KIF_FILE_MANIFESTS "${file_manifests}"
         KIF_GENERATED_HEADERS "${all_headers}"
         LINKER_LANGUAGE CXX)
@@ -453,11 +457,11 @@ function(add_kif_executable name)
 endfunction()
 
 function(kif_target_sources target)
-    cmake_parse_arguments(A "WERROR;KIF_WERROR" "BACKEND;OUTPUT_DIR;KIF_TARGET;KIF_PROFILE;KIF_SYSROOT;KIF_SIGNING"
+    cmake_parse_arguments(A "WERROR;KIF_WERROR" "BACKEND;OUTPUT_DIR;KIF_TARGET;KIF_PROFILE;KIF_SYSROOT;KIF_SIGNING;KIF_SMALL_STACK"
                           "SOURCES;INCLUDE_DIRS;KIFC_ARGS;KIF_SANITIZE;KIF_CFG;KIF_INCLUDE_DIRECTORIES;KIF_TRUST;KIF_REVOKED" ${ARGN})
     set(prop_args KIF_TARGET "${A_KIF_TARGET}" KIF_PROFILE "${A_KIF_PROFILE}" KIF_SYSROOT "${A_KIF_SYSROOT}"
         KIF_SANITIZE ${A_KIF_SANITIZE} KIF_CFG ${A_KIF_CFG} KIF_INCLUDE_DIRECTORIES ${A_KIF_INCLUDE_DIRECTORIES}
-        KIF_TRUST ${A_KIF_TRUST} KIF_REVOKED ${A_KIF_REVOKED} KIF_SIGNING "${A_KIF_SIGNING}")
+        KIF_TRUST ${A_KIF_TRUST} KIF_REVOKED ${A_KIF_REVOKED} KIF_SIGNING "${A_KIF_SIGNING}" KIF_SMALL_STACK "${A_KIF_SMALL_STACK}")
     if(A_KIF_WERROR)
         list(APPEND prop_args KIF_WERROR)
     endif()
@@ -484,6 +488,80 @@ function(kif_target_sources target)
     set_property(TARGET ${target} APPEND PROPERTY KIF_GENERATED_HEADERS ${gen_HEADERS})
     if(A_BACKEND STREQUAL "cpp" AND TARGET jplcz_kif::kif)
         target_link_libraries(${target} PUBLIC jplcz_kif::kif)
+    endif()
+endfunction()
+
+# Compares the compiler's stack frames with kif's estimate (docs/kif-stack.md, `kif stack-check`): adds the custom target <name>, which fails
+# when the compiler used more stack than the estimate says. SOURCES are the .kif files (the same ones the library was built from).
+#   TARGET t   the CMake target that compiles the generated C: `-fstack-usage` is added to its C compile options (GCC and clang write
+#              `<object>.su` next to each object) and the check reads those files, so the frames are the ones of YOUR compiler and flags.
+#              Build `t` first (the custom target depends on it); a `<name>` run re-reads the files of the last build.
+#   (no TARGET) the check lowers and compiles the C itself with CMAKE_C_COMPILER and CMAKE_C_FLAGS plus the build type's, plus FLAGS.
+#   FLAGS f..  extra compiler flags for that private compile; ALL adds the check to the default build.
+# The kif options (target, profile, cfg, sanitize, include dirs) come from the properties of TARGET and the build-wide KIF_* settings.
+function(kif_stack_check name)
+    cmake_parse_arguments(A "ALL" "TARGET" "SOURCES;FLAGS" ${ARGN})
+    if(NOT A_SOURCES)
+        message(FATAL_ERROR "kif_stack_check(${name}): SOURCES is required")
+    endif()
+    _kif_base_args(base_args)
+    if(A_TARGET)
+        if(NOT TARGET ${A_TARGET})
+            message(FATAL_ERROR "kif_stack_check(${name}): TARGET ${A_TARGET} is not a target")
+        endif()
+        _kif_property_args(target_args ${A_TARGET})
+    else()
+        set(target_args)
+    endif()
+    # stack-check takes only the options that decide what the lowered code is
+    set(keep --target --profile --cfg --sanitize -I)
+    set(args)
+    set(all_args ${base_args} ${target_args})
+    list(LENGTH all_args n)
+    set(i 0)
+    while(i LESS n)
+        list(GET all_args ${i} opt)
+        if(opt STREQUAL "--Werror")
+            math(EXPR i "${i} + 1")
+        else()
+            math(EXPR j "${i} + 1")
+            if(j LESS n AND opt IN_LIST keep)
+                list(GET all_args ${j} val)
+                list(APPEND args ${opt} "${val}")
+            endif()
+            math(EXPR i "${i} + 2")
+        endif()
+    endwhile()
+    get_property(_kif_python GLOBAL PROPERTY KIF_PYTHON_EXECUTABLE)
+    get_property(_kif_root GLOBAL PROPERTY KIF_ROOT_DIR)
+    set(mode_args)
+    if(A_TARGET)
+        target_compile_options(${A_TARGET} PRIVATE
+            "$<$<AND:$<COMPILE_LANGUAGE:C>,$<OR:$<C_COMPILER_ID:GNU>,$<C_COMPILER_ID:Clang>,$<C_COMPILER_ID:AppleClang>>>:-fstack-usage>")
+        get_target_property(bin_dir ${A_TARGET} BINARY_DIR)
+        list(APPEND mode_args --su "${bin_dir}/CMakeFiles/${A_TARGET}.dir")
+    else()
+        enable_language(C)
+        string(TOUPPER "${CMAKE_BUILD_TYPE}" cfg_upper)
+        string(STRIP "${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${cfg_upper}} ${A_FLAGS}" flags)
+        list(APPEND mode_args --cc "${CMAKE_C_COMPILER}")
+        if(NOT flags STREQUAL "")
+            list(APPEND mode_args "--flags=${flags}")
+        endif()
+    endif()
+    set(commands)
+    foreach(src IN LISTS A_SOURCES)
+        get_filename_component(abs "${src}" ABSOLUTE)
+        list(APPEND commands COMMAND "${CMAKE_COMMAND}" -E env "PYTHONPATH=${_kif_root}"
+             "${_kif_python}" -m kiflang.kif stack-check "${abs}" ${args} ${mode_args})
+    endforeach()
+    set(all)
+    if(A_ALL)
+        set(all ALL)
+    endif()
+    add_custom_target(${name} ${all} ${commands} COMMENT "kif stack-check: ${name}" VERBATIM)
+    if(A_TARGET)
+        add_dependencies(${name} ${A_TARGET})
     endif()
 endfunction()
 

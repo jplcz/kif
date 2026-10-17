@@ -1,0 +1,7 @@
+// Stage 6: what `kif stack-check` measures. Plain functions only (the C backend has to lower the file; demo.kif has a generic).
+// Run: kif stack-check measure.kif --flags=-O0   (the build's own flags: the compiler's frames depend on them)
+
+struct counter { n: u32 }
+fn leaf(x: u32) -> u32 { let a: [u8; 600] = [0; 600]; return a[1] as u32 + x; }
+fn top(x: u32) -> u32 { return leaf(x) + 1; }
+impl counter { fn bump(&mut self) -> u32 { return top(self.n); } }

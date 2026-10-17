@@ -137,6 +137,7 @@ property** of the same name that `kif_target_sources()` reads:
 | `KIF_TRUST` | PEM files of pinned keys/CA certificates (`--trust`); relative paths are resolved against the calling directory |
 | `KIF_REVOKED` | PEM files of revoked keys/certificates/CRLs (`--revoked`) |
 | `KIF_SIGNING` | `off`, `warn` (default) or `require` (`--signing`) for precompiled `.kifm` imports |
+| `KIF_SMALL_STACK` | stack budget in bytes or `off` (`--small-stack`, docs/kif-stack.md); keyword of `add_kif_library`/`kif_target_sources` too |
 | `KIF_PROVER` | `any` or `same` (`--prover`); `same` makes a different vendor prover KIFI041 an error |
 
 Trust and revocation files are dependencies of every generated file, so changing a key re-runs the checks.
@@ -196,3 +197,18 @@ Generated headers carry the input path as given; pass relative paths if reproduc
 
 ## Examples
 
+
+
+## Stack check (`kif_stack_check`)
+
+```cmake
+add_kif_library(drv SOURCES drv.kif BACKENDS c)
+# Compare the compiler's frames with kif's estimate (docs/kif-stack.md).
+#   TARGET drv  adds -fstack-usage (GCC or clang) to drv and reads the .su files of its objects
+#               under <bindir>/CMakeFiles/drv.dir; the frames are those of your compiler and flags
+#   SOURCES     the .kif files, lowered again to map C symbols back to kif functions
+#   FLAGS       only without TARGET: extra flags for the private compile with CMAKE_C_COMPILER
+#   ALL         run as part of the default build
+kif_stack_check(drv_stack SOURCES drv.kif TARGET drv)
+# cmake --build . --target drv_stack   (fails when the compiler used more than the estimate)
+```

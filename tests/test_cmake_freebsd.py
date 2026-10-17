@@ -100,3 +100,39 @@ def test_signing_policy_reaches_kifc(tmp_path):
     assert "--signing require" in ninja and "--signing warn" in ninja
     assert f"--revoked {tmp_path / 'crl.pem'}" in ninja
     assert str(tmp_path / "ca.pem") in ninja.split("build ", 1)[1]
+
+
+def test_small_stack_reaches_kifc(tmp_path):
+    """The stack budget (docs/kif-stack.md): kif.toml `small-stack`, the KIF_SMALL_STACK keyword and -DKIF_SMALL_STACK become `--small-stack`."""
+    (tmp_path / "a.kif").write_text(PLAIN)
+    (tmp_path / "b.kif").write_text(PLAIN.replace("twice", "thrice"))
+    (tmp_path / "kif.toml").write_text('small-stack = 4096\n[build]\nsources = ["a.kif"]\n')
+    (tmp_path / "CMakeLists.txt").write_text(
+        f"cmake_minimum_required(VERSION 3.20)\nproject(t C CXX)\nlist(APPEND CMAKE_MODULE_PATH {ROOT / 'cmake'})\ninclude(Kif)\n"
+        "kif_use_project()\nadd_kif_library(a BACKENDS c)\nadd_kif_library(b SOURCES b.kif BACKENDS c KIF_SMALL_STACK off)\n")
+    b = tmp_path / "b"
+    r = subprocess.run(["cmake", "-G", "Ninja", "-S", str(tmp_path), "-B", str(b)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    ninja = (b / "build.ninja").read_text()
+    assert "--small-stack 4096" in ninja and "--small-stack off" in ninja
+    r = subprocess.run(["ninja", "-C", str(b)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+@pytest.mark.parametrize("cc", ["gcc", "clang-24"])
+def test_stack_check_target_reads_su(tmp_path, cc):
+    """kif_stack_check(TARGET) adds -fstack-usage and reads the .su files of the build, for GCC and clang alike."""
+    if not shutil.which(cc):
+        pytest.skip(cc)
+    (tmp_path / "a.kif").write_text(PLAIN)
+    (tmp_path / "CMakeLists.txt").write_text(
+        f"cmake_minimum_required(VERSION 3.20)\nproject(t C)\nlist(APPEND CMAKE_MODULE_PATH {ROOT / 'cmake'})\ninclude(Kif)\n"
+        "add_kif_library(a SOURCES a.kif BACKENDS c)\nkif_stack_check(a_stack SOURCES a.kif TARGET a)\n")
+    b = tmp_path / "b"
+    r = subprocess.run(["cmake", "-G", "Ninja", "-S", str(tmp_path), "-B", str(b), f"-DCMAKE_C_COMPILER={cc}", "-DCMAKE_C_FLAGS=-fno-stack-protector"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    r = subprocess.run(["ninja", "-C", str(b), "a_stack"], capture_output=True, text=True)
+    out = r.stdout + r.stderr
+    assert "-fstack-usage" in (b / "build.ninja").read_text()
+    assert "from .su files" in out and "PROBLEM" not in out, out

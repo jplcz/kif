@@ -99,6 +99,15 @@ def _imports(mod, seen=None):
     return list(seen.values())
 
 
+def _small_stack(text: str):
+    from . import stackbudget
+
+    try:
+        return stackbudget.parse_option(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
+
+
 def compile_c(args: argparse.Namespace, path: str) -> int:
     try:
         tgt = targetdef.load(args.target)
@@ -118,9 +127,14 @@ def compile_c(args: argparse.Namespace, path: str) -> int:
         print(f"kifc: {e}", file=sys.stderr)
         return 2
     rep = report.Reporter(args.out_format, sys.stderr, "kifc")
-    for d in mod.diagnostics:
+    found = list(mod.diagnostics)
+    if not any(d.severity == ERROR for d in found):  # the stack budgets (docs/kif-stack.md): KIFW010 warns, KIFP084 fails the build
+        from . import stackinfo
+
+        found += stackinfo.diagnostics(mod.tree, tgt.stack(), args.small_stack or None, args.small_stack is not False)
+    for d in found:
         rep.add(path, d)
-    bad = any(d.severity == ERROR or (args.Werror and d.severity == WARNING) for d in mod.diagnostics)
+    bad = any(d.severity == ERROR or (args.Werror and d.severity == WARNING) for d in found)
     if bad or args.out_format in ("json", "sarif"):
         rep.finish()  # one document, also when there is nothing to report
     if bad:
@@ -174,6 +188,7 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--sysroot", metavar="DIR", help="the only place `import` reads from")
     signpolicy.add_options(ap)
     report.add_format_option(ap)
+    ap.add_argument("--small-stack", metavar="N|off", default=False, type=_small_stack, help="the default stack budget in bytes, or off; #[small_stack] in the file is narrower (docs/kif-stack.md)")
     ap.add_argument("--Werror", action="store_true", help="warnings fail the build")
     ap.add_argument("--manifest", metavar="FILE", help="also write the ABI manifest of the file")
     ap.add_argument("--depfile", metavar="FILE", help="Makefile-style depfile: outputs and the source")

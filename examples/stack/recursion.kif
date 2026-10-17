@@ -1,0 +1,8 @@
+// Recursion has no static stack bound. kif already refuses it in lowered code (KIFP032), so this file is an error example: the
+// stack analysis still computes what the call graph says (the editor shows both), and `KIFW013` is the net for cycles KIFP032 cannot
+// see (through a function value or an interface).
+
+fn countdown(n: u32) -> u32 { if n == 0 { return 0; } countdown(n - 1) }   // direct
+fn ping(n: u32) -> u32 { pong(n) }                                           // mutual
+fn pong(n: u32) -> u32 { ping(n) }
+fn caller_of_recursion() -> u32 { countdown(3) }                             // reaches a cycle: unbounded too

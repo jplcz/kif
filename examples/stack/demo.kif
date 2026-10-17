@@ -1,0 +1,69 @@
+// Stack usage demo (docs/kif-stack.md). Stage 1: the layout every estimate is built from.
+
+struct header { tag: u8, len: u32 }                // padded: 8 bytes, align 4
+struct packet { h: header, data: [u8; 60], n: usize } // nested struct and array
+
+#[repr(packed)]
+struct wire { tag: u8, len: u32 }                  // no padding: 5 bytes
+
+#[align(64)]
+struct line { x: u8 }                              // forced alignment: 64 bytes
+
+enum mode { idle, busy }                           // a C int
+
+struct holder<T> { v: T }                          // generic: size depends on T, so unknown
+
+// ---- stage 2: frames ----
+
+fn leaf(x: u32) -> u32 { x + 1 }                    // one parameter: 4 bytes, rounded up to 16, plus 16 overhead = 32
+
+fn buffer() -> u8 {                                  // a 256-byte array dominates the frame
+    let buf: [u8; 256] = [0; 256];
+    let n: usize = 3;
+    buf[n]
+}
+
+fn wrap(p: packet) -> u32 { p.h.len }                // a by-value parameter counts: 80 bytes
+
+#[stack(512)]                                        // declared: the checker uses 512, not its estimate
+fn external_cost(x: u32) -> u32 { x }
+
+// KIFP053 in diagnostics.txt is expected: the C backend cannot lower a generic function; the estimate still reports it.
+fn generic<T>(v: holder<T>) -> u32 { 0 }            // the size of T is unknown: the frame is unknown, never 0
+
+// ---- stage 3: the call graph ----
+
+#[safe]
+extern "C" fn log_line(n: u32);                      // no #[stack]: the depth below is a lower bound (KIFW014)
+
+#[safe]
+#[stack(200)]
+extern "C" fn hash(x: u32) -> u32;                   // declared: counted as 200 bytes
+
+fn level3(x: u32) -> u32 { hash(x) }                 // frame 32 + hash 200
+fn level2(x: u32) -> u32 { level3(x) + 1 }           // frame 32
+fn level1(x: u32) -> u32 { let t = level2(x); log_line(t); t } // frame 32; the deepest chain is level1 -> level2 -> level3 -> hash
+
+// ---- stage 4: budgets ----
+// Narrowest scope wins: fn > impl > struct > file (#![small_stack(N)]) > --small-stack > the target's stack.default_budget.
+
+#[small_stack(300)]
+fn within() -> u32 { level3(1) }                    // 248 <= 300: fine
+
+#[small_stack(250)]
+fn over() -> u32 { level2(1) }                      // 280 > 250: KIFW010 names the chain and the biggest variables
+
+#[small_stack(off)]
+fn exempt() -> u32 { level1(1) }                    // lifts any wider budget
+
+#[small_stack(1024)]
+fn huge_local() -> u8 { let b: [u8; 2048] = [0; 2048]; b[1] }   // a single variable above the budget: KIFP084
+
+struct counter { n: u32 }
+
+#[small_stack(100)]                                 // for every method of this impl
+impl counter {
+    fn bump(&mut self) -> u32 { level3(self.n) }    // 264 > 100: KIFW010
+    #[small_stack(500)]                             // a method may widen it again
+    fn bump_more(&mut self) -> u32 { level3(self.n) }
+}

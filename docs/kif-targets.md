@@ -129,6 +129,12 @@ a loop in `extends` is an error. Check with `kif target check`; show the result 
 | `wipe.barrier` | text | C statement placed after the wipe that reads `{p}`, so the write is not dead; default the GCC/Clang `__asm__ volatile ("" : : "r"({p}) : "memory")`. `""` means none, which is `KIFW006` when a barrier is needed. |
 | `wipe.barrier_after_call` | bool | Emit the barrier after `call`. Default `true` for the built-in memset, `false` once `call` is set. |
 | `wipe.header` | text | Include for the primitive (`<string.h>` for the default). A bare name is wrapped in angle brackets. |
+| `stack` | object | Stack usage estimate (docs/kif-stack.md section 9). All keys optional. |
+| `stack.pointer_bits` | 16, 32, 64 | Size of a pointer for `ptr<T>`, `&T`, slices, vectors. Default 64. |
+| `stack.align` | power of two | Frames are rounded up to this. Default 16. |
+| `stack.frame_overhead` | integer | Bytes per call besides the locals (return address, saved frame pointer). Default 16. |
+| `stack.share` | `sum` | `sum` (default): the locals of a function add up. `liveness` (the peak of the locals live at once) is designed but not implemented. |
+| `stack.default_budget` | integer or null | Bytes; the default for `--small-stack`. Default null (no budget). |
 | `wipe.macro` | identifier | Name of the greppable macro every wipe is emitted through. Default `KIF_SECURE_WIPE`. |
 | `wipe.volatile_call` | text | Wipe for `#[secure_wipe(volatile)]`, `{n}` bytes at `{p}`; default a `volatile unsigned char` loop. |
 | `alloc` | object or `null` | The allocator of a **C** target; C++ targets use reloco and must not set it (nor `panic`, `assert`, `errno`, `cells`). `null`/absent: nothing that allocates can be synthesized for this target. |

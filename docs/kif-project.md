@@ -67,7 +67,7 @@ interval = 0.5                # seconds between polls of `--watch`
 
 ## CMake integration of `kif.toml`
 
-`kif_use_project([FILE kif.toml])` runs `kif project --cmake`, includes the generated fragment (variables `KIF_PROJECT_TRUST`/`_REVOKED`/`_SIGNING`/`_PROVER` (from `[signing]`), `KIF_PROJECT_TARGET`,
+`kif_use_project([FILE kif.toml])` runs `kif project --cmake`, includes the generated fragment (variables `KIF_PROJECT_TRUST`/`_REVOKED`/`_SIGNING`/`_PROVER` (from `[signing]`), `KIF_PROJECT_TARGET`, `KIF_PROJECT_SMALL_STACK` (from `small-stack = N|"off"`, `--small-stack`),
 `_PROFILE`, `_SANITIZE`, `_CFG`, `_INCLUDE`, `_SYSROOT`, `_WERROR`, `_SOURCES`) and re-runs configure when the file changes.
 Those are the lowest-priority defaults: keyword > target property > `-DKIF_*` > `kif.toml` > `CMAKE_BUILD_TYPE`. Output
 directories (`[build] c/freebsd`) are command line only; CMake chooses its own. Generation always runs `kifc --no-project`, so

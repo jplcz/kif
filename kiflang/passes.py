@@ -375,7 +375,9 @@ PIPELINES: Dict[str, Tuple[str, ...]] = {
 def check_module(tree) -> List[dg.Diagnostic]:
     """What the IR check passes (`kind == "check"` and cheap: `refuted`) say about a module that compiles: the diagnostics `kif lint` and the
     editor show next to the checker's. A function the IR builder cannot handle has none."""
-    return run_module(tree, ["refuted", "require_proved", "borrows", "contracts", "taint"]).diagnostics
+    from . import stackinfo
+
+    return run_module(tree, ["refuted", "require_proved", "borrows", "contracts", "taint"]).diagnostics + stackinfo.diagnostics(tree)
 
 
 def named_pipeline(name: str) -> Optional[List[str]]:

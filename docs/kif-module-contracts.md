@@ -71,6 +71,9 @@ security = {
       "unsafe": false,
       "secure_wipe": false,                          # the function carries #[secure_wipe] (derived; checked against the declaration)
       "wipes": 0,                                    # informational: wipe sites in the compiled body
+      "stack": 48,                                   # informational: the estimated frame in bytes (null: cannot be sized), docs/kif-stack.md
+      "stack_depth": 412,                            # informational: frame plus the deepest callee chain (null: unbounded or unknown)
+      "stack_exact": true,                           # false: a lower bound, some callee has no known frame
       "barriers": { "explicit": 1, "implicit": 2 },  # counts in the compiled body; the sites stay in the vendor's report
       "kept_checks": ["index"],                      # check kinds the compiled body still performs; [] means fully proved
       "proved": ["div", "shift"],                    # check kinds the vendor's prover discharged

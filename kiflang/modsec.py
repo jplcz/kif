@@ -24,7 +24,7 @@ from . import ast, manifest
 
 SCHEMA = 1
 DERIVED = ("export", "tainted_params", "tainted_result", "untaint", "trusted", "contracts", "unsafe", "secure_wipe")
-INFORMATIONAL = ("barriers", "kept_checks", "proved", "ir_hash", "wipes")
+INFORMATIONAL = ("barriers", "kept_checks", "proved", "ir_hash", "wipes", "stack", "stack_depth", "stack_exact")
 UNKNOWN = "unknown"
 _FACT_ATTRS = ("some", "non_null", "non_empty", "len_ge", "lt_len")
 _FN_FACT_ATTRS = ("ensures", "preserves", "when", "len_of", "unchecked_form")
@@ -181,11 +181,17 @@ def build(mod, target_name: str, profile_name: str, language: str) -> Dict[str, 
     exports_all, sinks = taint.policy(getattr(mod, "cfg", None))
     fns, types = declared(mod.tree, exports_all)
     info = _analysis(mod.tree)
+    from . import stackinfo, target as target_mod
+
+    est = stackinfo.analyse(mod.tree, target_mod.load(target_name).stack())
+    sized = {d.name: d for d in est.depths} if est else {}
     decls = {key: f for key, f, _ in _decls(mod.tree)}
     for name, entry in fns.items():
         if entry.get("embedded"):
             continue
         entry.update(info.get(id(decls[name]), {"wipes": None, "barriers": None, "kept_checks": UNKNOWN, "proved": UNKNOWN, "ir_hash": None}))
+        d = sized.get(name)  # the estimate of docs/kif-stack.md: null when it cannot be made
+        entry.update({"stack": d.frame if d else None, "stack_depth": d.depth if d else None, "stack_exact": bool(d) and d.depth is not None and not d.incomplete})
     return {
         "target": target_name, "profile": profile_name, "language": language,
         "taint": {"exports": "all" if exports_all else "declared", "sinks": sorted(sinks)},

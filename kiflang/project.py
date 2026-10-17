@@ -26,6 +26,7 @@ FILE_NAME = "kif.toml"
 SHARED: Dict[str, Tuple[str, str]] = {
     "target": ("str", "target"), "profile": ("str", "profile"), "sanitize": ("list", "sanitize"), "cfg": ("list", "cfg"),
     "include": ("paths", "include"), "sysroot": ("path", "sysroot"), "format": ("str", "out_format"), "werror": ("bool", "Werror"),
+    "small-stack": ("budget", "small_stack"),
 }
 SECTIONS: Dict[str, Dict[str, Tuple[str, str]]] = {
     "build": {
@@ -176,6 +177,9 @@ def _convert(kind: str, value: Any, base: str, where: str) -> Any:
     if kind == "int":
         need(isinstance(value, int) and not isinstance(value, bool), "an integer")
         return value
+    if kind == "budget":  # a stack budget in bytes, or "off"; handed to argparse as text, which converts it like the option
+        need(value == "off" or (isinstance(value, int) and not isinstance(value, bool) and value > 0), "a positive byte count or \"off\"")
+        return str(value)
     if kind == "float":
         need(isinstance(value, (int, float)) and not isinstance(value, bool), "a number")
         return float(value)

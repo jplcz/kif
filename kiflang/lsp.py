@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import url2pathname
 
-from . import ast, hints, passes, taint, wipes
+from . import ast, hints, passes, stackinfo, taint, wipes
 from . import diagnostics as dg
 from . import lexer as lx
 from . import quickfix
@@ -460,7 +460,18 @@ class Server:
                     if not param.receiver and not same:
                         out.append({"position": lsp_range(arg.range)["start"], "label": f"{param.name.text}:", "kind": 2,
                                     "paddingRight": True})
-        return out + self.check_hints(uri, mod, lo, hi)
+        return out + self.stack_hints(mod, lo, hi) + self.check_hints(uri, mod, lo, hi)
+
+    def stack_hints(self, mod: Module, lo: int, hi: int) -> List[dict]:
+        """`stack depth/budget` after the name of a function that has a stack budget (docs/kif-stack.md); none while the file has errors."""
+        if mod.tree is None or any(d.severity == dg.ERROR for d in mod.diagnostics) or not stackinfo.diagnostics_possible(mod.tree):
+            return []
+        info = stackinfo.analyse(mod.tree)
+        out: List[dict] = []
+        for fn in hints.functions_of(mod.tree):
+            if lo <= fn.name.range.start.line <= hi and (h := stackinfo.hint(info, fn)) is not None:
+                out.append({"position": lsp_range(fn.name.range)["end"], "label": h["label"], "paddingLeft": True, "tooltip": h["tooltip"]})
+        return out
 
     def check_hints(self, uri: str, mod: Module, lo: int, hi: int) -> List[dict]:
         """Run-time checks the provers drop (`✓`) or keep (`⚠`) in the functions that overlap the visible lines.
@@ -659,6 +670,10 @@ class Server:
             notes.insert(0, origin + ".")
         if notes:
             text += "\n\n" + "\n\n".join(notes) + "\n\n_Taint: docs/kif-taint.md_"
+        if sym.kind == "fn" and isinstance(sym.node, ast.FnDecl) and sym.module.tree is not None and not any(d.severity == dg.ERROR for d in sym.module.diagnostics):
+            stack_note = stackinfo.describe(stackinfo.analyse(sym.module.tree), sym.node)
+            if stack_note:
+                text += "\n\n" + stack_note
         wipe = [a for a in getattr(sym.node, "attrs", None) or [] if a.name.text == "secure_wipe"]
         if wipe:
             what = "every local of this function is wiped after its last use (the nuclear option: the body is compiled unoptimized)" \

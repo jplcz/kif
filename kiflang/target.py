@@ -197,6 +197,13 @@ _SPEC: Dict[str, Any] = {
         "macro": (lambda v: isinstance(v, str) and re.fullmatch(r"[A-Za-z_]\w*", v) is not None, "name of the greppable macro every wipe goes through (default KIF_SECURE_WIPE)"),
         "volatile_call": (_is_str, "C statement wiping {n} bytes at {p} for #[secure_wipe(volatile)], opaque to the compiler"),
     },
+    "stack": {  # stack usage estimate (docs/kif-stack.md section 9)
+        "pointer_bits": (lambda v: v in (16, 32, 64), "the size of a pointer in bits, 16, 32 or 64 (default 64)"),
+        "align": (lambda v: isinstance(v, int) and not isinstance(v, bool) and v > 0 and v & (v - 1) == 0, "frames are rounded up to this power of two (default 16)"),
+        "frame_overhead": (lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0, "bytes per call besides the locals: return address and saved frame pointer (default 16)"),
+        "share": (lambda v: v == "sum", "`sum` (default): all locals of a function add up (`liveness`, the peak of the locals live at once, is not implemented yet)"),
+        "default_budget": (lambda v: v is None or (isinstance(v, int) and not isinstance(v, bool) and v > 0), "bytes, the default for --small-stack; null: no budget"),
+    },
     "alloc": {  # the whole section may be null: no allocator, nothing that allocates can be synthesized
         "malloc": (_is_str, "C expression allocating {size} bytes, NULL on failure, e.g. `kmalloc({size}, GFP_KERNEL)`"),
         "zalloc": (_is_str, "like malloc but zeroed; optional (kif then uses malloc + memset)"),
@@ -353,6 +360,14 @@ class WipePlan(NamedTuple):
     default: bool  # the built-in memset default is in use
 
 
+class StackPlan(NamedTuple):
+    pointer_bits: int
+    align: int
+    frame_overhead: int
+    share: str
+    default_budget: Optional[int]
+
+
 class Target:
     """A resolved target definition. `data` is the merged JSON; `chain` lists the files it came from, base first."""
 
@@ -480,6 +495,11 @@ class Target:
             header = f"<{header}>"
         vol = sub(w.get("volatile_call", WIPE_DEFAULT_VOLATILE), p="(p)", n="(n)")
         return WipePlan(w.get("macro", "KIF_SECURE_WIPE"), body, vol, header, error, call is None)
+
+    def stack(self) -> "StackPlan":
+        """The stack-estimate parameters with the defaults applied (docs/kif-stack.md section 9)."""
+        s = self.data.get("stack") or {}
+        return StackPlan(s.get("pointer_bits", 64), s.get("align", 16), s.get("frame_overhead", 16), s.get("share", "sum"), s.get("default_budget"))
 
     def alloc(self, which: str, **args: str) -> Optional[str]:
         """The allocator text (`malloc`, `zalloc`, `realloc`, `free`, `aligned`) with its placeholders filled; None when the

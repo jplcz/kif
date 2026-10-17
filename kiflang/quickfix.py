@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
-from . import ast
+from . import ast, hints, stackinfo
 from . import diagnostics as dg
 from . import lexer as lx
 from .astutil import decl_line, find_attr, has_attr, offset_of, slice_text, walk
@@ -443,6 +443,7 @@ def check(key: str, text: str, cfg: Optional[Config] = None, resolver=None, sysr
     diags = sorted(mod.diagnostics, key=lambda d: (d.range.start, d.code))
     if not any(d.severity == dg.ERROR for d in diags):
         diags += lint(mod, cfg, baseline)
+        diags += stackinfo.diagnostics(mod.tree)
     return mod, diags
 
 
@@ -484,6 +485,26 @@ def fix_all(key: str, text: str, cfg: Optional[Config] = None, resolver=None, sy
             continue
         text, applied = new, applied + chosen
     return text, applied
+
+
+@fixer("KIFW010")
+def _over_stack_budget(ctx: Context, d: Diagnostic) -> List[Fix]:
+    """The function is over its stack budget (docs/kif-stack.md): raise its own `#[small_stack(N)]` to what it needs, or lift the budget."""
+    fn = next((f for f in hints.functions_of(ctx.mod.tree) if f.name.range == d.range), None)
+    info = stackinfo.analyse(ctx.mod.tree)
+    dep = info.of(fn) if info and fn is not None else None
+    if fn is None or dep is None or dep.depth is None:
+        return []
+    fixes: List[Fix] = []
+    own = next((a for a in fn.attrs or [] if a.name.text == "small_stack" and a.args and getattr(a.args[0].value, "value", None) is not None), None)
+    if own is not None:
+        need = -(-dep.depth // 64) * 64
+        fixes.append(Fix(f"Raise this function's stack budget to {need} bytes", [Edit(own.args[0].value.range, str(need))], "KIFW010"))
+    line = decl_line(ctx.lines, fn)
+    fixes.append(Fix("Lift the stack budget of this function (#[small_stack(off)])",
+                     [_insert(Pos(line, 0), ctx.indent_of(line) + "#[small_stack(off)]\n")] if own is None else
+                     [Edit(own.args[0].value.range if own.args[0].value is not None else own.range, "off")], "KIFW010"))
+    return fixes
 
 
 def diff(old: str, new: str, path: str) -> str:
