@@ -142,6 +142,7 @@ a loop in `extends` is an error. Check with `kif target check`; show the result 
 | `features.int64_div` | bool | `false`: 64-bit `/` and `%` are refused (KIFP051); true needs a libgcc-free division. |
 | `features.floats` | bool | Whether floating point may be used. |
 | `features.line_directives` | bool | Emit `#line` directives that point at the `.kif`. |
+| `features.fold_notes` | bool | Default true. A `/* kif: kept, why */` comment after each temporary the emitter did not fold into an expression (docs/kif-ir-codegen.md, "Expression folding"). `false` leaves the C without them. |
 | `features.<name>` | bool, integer or string | A **custom flag**: lower-case name of your choice. Read by `includes.when`, and by backends and `cfg(feature = "<name>")` once those exist. |
 | `cfg` | map | What `cfg(key = "value")` and `cfg(flag)` see besides the built-in atoms: `name -> "value"`, `["v1", "v2"]` or `true` (a bare flag). E.g. `"os": "freebsd"`, `"arch": "x86_64"`. |
 | `profile` | string | The profile used when none is chosen on the command line (default `debug`). |

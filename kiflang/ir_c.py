@@ -1541,7 +1541,7 @@ class _Emit:
             self.elided_notes(b.term)
             self.term(b)
             chunks[b] = self.out
-        textfold.fold(chunks, self.conds, notes=True)
+        textfold.fold(chunks, self.conds, notes=self.lw.t.flag("fold_notes", True), pure=textfold.PURE_C)
         st = structure.build(fn) or structure.flat(fn)
         rendered = self.render(st.items, chunks, st.gotos, 0)
         for t in used_temps.values():

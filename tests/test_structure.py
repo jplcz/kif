@@ -80,3 +80,14 @@ def test_a_kept_definition_says_why():
     chunks = {"b": ["\tkif_t1 = f(x);", "\tkif_t2 = g(y);", "\treturn kif_t1 + kif_t2;"]}
     textfold.fold(chunks, {}, notes=True)
     assert chunks["b"][0].endswith("/* kif: kept, two calls would be reordered */")
+
+
+def test_notes_can_be_off_and_the_pure_list_is_a_parameter():
+    from kiflang import textfold
+
+    chunks = {"b": ["\tkif_t1 = f(x);", "\tkif_t2 = g(y);", "\treturn kif_t1 + kif_t2;"]}
+    textfold.fold(chunks, {})
+    assert chunks["b"][0] == "\tkif_t1 = f(x);"
+    chunks = {"b": ["\tkif_t1 = f(x);", "\tkif_t2 = g(y);", "\treturn kif_t1 + kif_t2;"]}
+    textfold.fold(chunks, {}, pure=("g",))  # g has no side effects here, so both fold
+    assert chunks["b"] == ["\treturn f(x) + g(y);"]

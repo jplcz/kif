@@ -21,13 +21,13 @@ deliberately small: a missed fold only costs readability, a wrong one costs corr
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 _DEF = re.compile(r"\t(kif_t\d+) = (.+);")
 _TOKEN = re.compile(r"\bkif_t\d+\b")
 _ATOM = re.compile(r"[A-Za-z_]\w*|-?\d+[uUlL]*|U?INT64_C\(-?\d+\)|\(\(\w+\)-?\d+\)|true|false")
 _CALL = re.compile(r"\b(\w+)\(")
-_PURE = ("KIF_", "UINT64_C", "INT64_C", "sizeof")
+PURE_C = ("KIF_", "UINT64_C", "INT64_C", "sizeof")  # call-like names that have no side effects in generated C; a backend passes its own list
 _COND = "\t@COND("
 
 
@@ -35,11 +35,11 @@ def _is_code(line: str) -> bool:
     return not line.startswith("#") and not line.lstrip().startswith("/*")
 
 
-def _impure_calls(text: str) -> int:
+def _impure_calls(text: str, pure: Tuple[str, ...] = PURE_C) -> int:
     n = 0
     for m in _CALL.finditer(text):
         name = m.group(1)
-        if name in ("if", "while", "return", "COND") or name.startswith(_PURE) or name == "KIF_PANIC":
+        if name in ("if", "while", "return", "COND") or name.startswith(pure) or name == "KIF_PANIC":
             continue
         n += 1
     return n
@@ -79,9 +79,9 @@ def _modifies(line: str, x: str) -> bool:
     return re.search(rf"(?<![\w.>]){re.escape(x)}\s*(\[[^\]]*\]\s*)?(\.\w+\s*|->\w+\s*)*(=(?!=)|[-+*/%&|^]=|<<=|>>=|\+\+|--)", line) is not None
 
 
-def fold(chunks: Dict[object, List[str]], conds: Dict[object, str], notes: bool = False) -> None:
+def fold(chunks: Dict[object, List[str]], conds: Dict[object, str], notes: bool = False, pure: Tuple[str, ...] = PURE_C) -> None:
     """Fold the temporaries of every block of a function in place. `chunks` maps a block to its statement lines, `conds` to the text of
-    its branch condition (blocks without a branch are not in it). With `notes`, a definition that stays gets a trailing `/* kif: kept, why */`."""
+    its branch condition (blocks without a branch are not in it). `pure` names the call-like tokens of the backend that have no side effects (macros, literals, `sizeof`). With `notes`, a definition that stays gets a trailing `/* kif: kept, why */`."""
     uses_total: Dict[str, int] = {}
     address_taken = set()
     text_all = [ln for ls in chunks.values() for ln in ls] + list(conds.values())
@@ -141,7 +141,7 @@ def fold(chunks: Dict[object, List[str]], conds: Dict[object, str], notes: bool 
                 if nxt != use_at[0]:
                     why[name] = "other statements run between its definition and its use"
                     continue
-                if _impure_calls(expr) + _impure_calls(work[nxt]) > 1:
+                if _impure_calls(expr, pure) + _impure_calls(work[nxt], pure) > 1:
                     why[name] = "two calls would be reordered"
                     continue
                 work[nxt] = _substitute(work[nxt], name, expr)
@@ -152,13 +152,13 @@ def fold(chunks: Dict[object, List[str]], conds: Dict[object, str], notes: bool 
         if has_cond:
             conds[b] = work.pop()[len(_COND):-1]
         chunks[b] = work
-    _drop_dead(chunks, conds, address_taken, companions)
+    _drop_dead(chunks, conds, address_taken, companions, pure)
     if notes:
         for b, lines in chunks.items():
             chunks[b] = [f"{ln} /* kif: kept, {why[m.group(1)]} */" if (m := _DEF.fullmatch(ln)) and m.group(1) in why else ln for ln in lines]
 
 
-def _drop_dead(chunks: Dict[object, List[str]], conds: Dict[object, str], address_taken, companions) -> None:
+def _drop_dead(chunks: Dict[object, List[str]], conds: Dict[object, str], address_taken, companions, pure: Tuple[str, ...]) -> None:
     """Final dead-store elimination: a `kif_tN = expr;` whose temp is read nowhere (folding often leaves the copy of a value that only an
     elided check used) is dropped, or kept as the bare `expr;` when it still calls something."""
     reads: Dict[str, int] = {}
@@ -172,7 +172,7 @@ def _drop_dead(chunks: Dict[object, List[str]], conds: Dict[object, str], addres
         for ln in lines:
             m = _DEF.fullmatch(ln)
             if m and m.group(1) not in companions and m.group(1) not in address_taken and not reads.get(m.group(1)) and "{" not in m.group(2):
-                if _impure_calls(m.group(2)):
+                if _impure_calls(m.group(2), pure):
                     out.append(f"\t{m.group(2)};")
                 continue
             out.append(ln)

@@ -147,6 +147,9 @@ another block, it is assigned or has its address taken later, the copied local i
 (and is not a copy), other statements run between its definition and its use, two calls would be reordered. A temp that is never
 read is dropped (a final dead-store pass keeps only a call it makes, as a bare statement).
 
+Turn the notes off with `features.fold_notes: false` in the target. The set of call-like names the folder treats as side-effect free
+(`textfold.PURE_C`: `KIF_*`, `UINT64_C`, `sizeof`) is a parameter (`pure`), so another backend (C++) passes its own list and shares the rest.
+
 Temps that no longer occur in the text are not declared. Opt-out: none; the folding is semantics-preserving, and the differential tests
 and the compiled `tests/c` corpus run on the folded output.
 

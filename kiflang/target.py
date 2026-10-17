@@ -206,6 +206,7 @@ _SPEC: Dict[str, Any] = {
         "int64_div": (lambda v: isinstance(v, bool), "true or false (false: 64-bit division is refused, KIFP051)"),
         "floats": (lambda v: isinstance(v, bool), "true or false"),
         "line_directives": (lambda v: isinstance(v, bool), "true or false: #line directives pointing at the .kif"),
+        "fold_notes": (lambda v: isinstance(v, bool), "true or false: a `/* kif: kept, why */` comment where a temporary was not folded (default true)"),
         "*": (lambda v: isinstance(v, (bool, int, str)), "a bool, integer or string (a custom flag)"),
     },
     "cfg": (
