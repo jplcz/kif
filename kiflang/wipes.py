@@ -213,3 +213,32 @@ def report(mod: ir.Module, tree, file: str) -> str:
     out += ["", f"Exempt variables (#[wipe_exempt]): {len(exempt_lets)}"]
     out += [f"  {file}:{line(s)}: {fn}: {s.name.text}" for fn, s in exempt_lets]
     return "\n".join(out) + "\n"
+
+
+def describe_local(mod, pos, name: str) -> Optional[str]:
+    """Hover text for the secure variable or parameter `name` at `pos`: why it is wiped and where (lines of its wipe sites), or None for an
+    ordinary variable. It builds the IR of the function around `pos` and runs the `wipes` pass on it."""
+    from . import passes
+
+    if mod.tree is None:
+        return None
+    try:
+        built = ir.build_module(mod.tree)
+    except Exception:  # noqa: BLE001 - a half-typed file must not break hover
+        return None
+    for f in built.functions:
+        if f.node is None or not f.node.range.contains(pos):
+            continue
+        loc = next((l for l in f.locals if l.name == name and (l.wipe or l.secure_struct)), None)
+        if loc is None:
+            return None
+        passes.run_function(f, ["wipes"])
+        lines = sorted({w.site.range.start.line + 1 for _, w in f.instrs() if isinstance(w, ir.Wipe) and w.local is loc and getattr(w.site, "range", None) is not None})
+        where = f" (line {', '.join(map(str, lines))})" if lines else ""
+        if loc.secure_struct and not loc.wipe:
+            return (f"**Secure wipe:** `{name}` holds a `#[secure_wipe]` struct: its drop wipes it field by field; if it is moved from, the "
+                    f"vacated slot is wiped{where}.")
+        how = "volatile stores" if loc.wipe_volatile else "the target's wipe primitive"
+        what = "after its last use" if lines else "at scope exit"
+        return f"**Secure wipe:** `{name}` is wiped {what}{where} with {how}."
+    return None

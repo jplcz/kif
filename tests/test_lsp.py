@@ -518,3 +518,14 @@ def test_secure_wipe_hover_token_and_quickfix(c):
     acts = c.call("textDocument/codeAction", {"textDocument": {"uri": uri}, "range": rng, "context": {"diagnostics": []}})
     fix = next(a for a in acts if "wipe_exempt" in a["title"])
     assert fix["edit"]["changes"][uri][0]["newText"] == "#[wipe_exempt] "
+
+
+def test_hover_on_secure_locals(c):
+    text = ("#[secure_wipe]\nstruct key { k: [u8; 4] }\nfn eat(k: key) -> u32 { return 0; }\n"
+            "#[secure_wipe]\nfn f() -> u32 {\n    let a: u32 = 5;\n    let b = key { k: [1, 2, 3, 4] };\n    return eat(b) + a;\n}\n"
+            "fn g() -> u32 { let z: u32 = 1; return z; }\n")
+    uri, _ = c.open("h.kif", text)
+    hover = lambda line, col: (c.call("textDocument/hover", c.at(uri, line, col)) or {}).get("contents", {}).get("value", "")
+    assert "wiped after its last use (line 8)" in hover(5, 8)
+    assert "holds a `#[secure_wipe]` struct" in hover(6, 8) and "moved from" in hover(6, 8)
+    assert "Secure wipe" not in hover(9, 21)

@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import url2pathname
 
-from . import ast, hints, passes, taint
+from . import ast, hints, passes, taint, wipes
 from . import diagnostics as dg
 from . import lexer as lx
 from . import quickfix
@@ -626,8 +626,13 @@ class Server:
         mod, sym, found, tokens = self._target(p["textDocument"]["uri"], lsp_pos(p["position"]))
         if found is not None and sym is None:
             note = taint.describe_local(mod, lsp_pos(p["position"]), found[0][-1]) if len(found[0]) == 1 else None
-            if note is None:
+            wipe_note = wipes.describe_local(mod, lsp_pos(p["position"]), found[0][-1]) if len(found[0]) == 1 else None
+            if note is None and wipe_note is None:
                 return None
+            if note is None:
+                return {"contents": {"kind": "markdown", "value": wipe_note + "\n\n_docs/kif-secure-wipe.md_"}, "range": lsp_range(tokens[found[1]].range)}
+            if wipe_note:
+                note += "\n\n" + wipe_note
             trail = taint.trail(mod, lsp_pos(p["position"]))
             if trail is not None:
                 if len(trail[1]) > 1:
