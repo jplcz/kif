@@ -65,6 +65,7 @@ from . import ast
 from . import cells
 from . import cfg
 from . import places
+from . import taint
 from . import cmode
 from . import diagnostics as dg
 from . import methods as M
@@ -446,6 +447,7 @@ class BodyChecker:
         saved_params, self.param_ty = self.param_ty, self.param_map(getattr(f, "generics", []))
         try:
             self.scoped(gens, go)
+            taint.check_body(self, f)
         finally:
             self.param_ty = saved_params
             self.cur, self.unsafe = saved_cur, saved_unsafe
@@ -1613,6 +1615,8 @@ class BodyChecker:
         return T.tuple_of(self.value(x) for x in e.elems)
 
     def e_MacroCall(self, e: ast.MacroCall) -> Ty:
+        if e.name.text == "untaint" and len(e.args) == 2:
+            return self.expr(e.args[1])      # `untaint!("reason", f(..))`: the shape is checked by taint.py (KIFT010)
         for a in e.args:
             self.expr(a)
         if e.name.text in ("format", "fail", "warn", "panic") and e.args:

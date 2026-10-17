@@ -20,7 +20,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from . import ast, astutil, cfg, facts
+from . import ast, astutil, cfg, facts, taint
 from . import diagnostics as dg
 from .parser import parse
 from .source import Pos, Range
@@ -343,9 +343,13 @@ class _Resolver:
         elif isinstance(it, ast.TypeAlias):
             self.in_generics(it.generics, lambda: self.type_(it.ty))
         elif isinstance(it, ast.StructDecl):
+            taint.check_type_attrs(self.d, it.attrs, "a struct")
+            for f in it.fields:
+                taint.check_type_attrs(self.d, f.attrs, "a field")
             self.unique([f.name for f in it.fields], "field", it.fields)
             self.in_generics(it.generics, lambda: [self.field_type(f.ty) for f in it.fields], True)
         elif isinstance(it, ast.EnumDecl):
+            taint.check_type_attrs(self.d, it.attrs, "an enum")
             self.unique([m.name for m in it.members], "enumerator")
             if it.repr:
                 self.type_(it.repr)
@@ -376,6 +380,7 @@ class _Resolver:
 
     def fn(self, f: ast.FnDecl) -> None:
         facts.check_fn(self, f)
+        taint.check_fn(self.d, f)
 
         def go() -> None:
             self.unique([p.name for p in f.params], "parameter")

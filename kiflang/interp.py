@@ -792,6 +792,8 @@ class Interp:
             return UNIT
         if name == "unreachable":
             raise self.trap("panic: unreachable", e)
+        if name == "untaint" and len(e.args) == 2:
+            return self.val(e.args[1])
         raise NotImplementedError(f"{name}!")
 
     # -- control flow

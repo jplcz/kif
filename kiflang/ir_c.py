@@ -590,6 +590,8 @@ class _Emit:
                 raise _Bail("format string")
             self.strs[i.dst.id] = i.text
         elif isinstance(i, ir.Call):
+            if i.reason:
+                self.put(f"/* kif: untaint: {i.callee}(): {i.reason.replace('*/', '* /')} ({lw.file}:{line}) */")
             self.call(i)
         elif isinstance(i, ir.Check):
             self.check(i)

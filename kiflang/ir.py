@@ -187,6 +187,7 @@ class Call(Instr):
     flows: Optional[List[int]] = None  # which operands the result may borrow from (-1 the receiver, k the k-th of `args`); None: unknown, assume all
     ensures: Optional[Tuple[str, int]] = None  # `#[ensures(f)]` of the callee: (fact, n) the result has (`some`, `non_null`, `non_empty`, `len_ge` with n >= 1 elements)
     preserves: Optional[List[int]] = None  # `#[preserves]` of the callee: the operands (-1 receiver, k the k-th of `args`) that keep every fact the caller knew
+    reason: str = ""  # the reason written in `untaint!("reason", f(..))`: the code generators print it as an audit comment
     unguarded: bool = False  # set by the `elide` pass: every fact the callee requires is proved here, so the call may skip the callee's guard (`F__nofacts`)
 
     def uses(self) -> List[Value]:
@@ -1532,6 +1533,12 @@ class _Builder:
         return self.opaque("lambda", [], e, self.tys(e))  # non-capturing: its body cannot touch this function's locals
 
     def e_MacroCall(self, e: ast.MacroCall) -> Optional[Value]:
+        if e.name.text == "untaint" and len(e.args) == 2 and isinstance(e.args[1], ast.Call):
+            v = self.expr(e.args[1])
+            call = next((i for b in [self.cur] if b is not None for i in reversed(b.instrs) if isinstance(i, Call)), None)
+            if call is not None and isinstance(e.args[0], ast.Lit):
+                call.reason = str(e.args[0].value)
+            return v
         args: List[Optional[Value]] = []
         for a in e.args:
             if self.is_place(a) and not isinstance(a, ast.Unary):  # a bare place may be written by the macro
