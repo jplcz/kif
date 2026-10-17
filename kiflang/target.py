@@ -207,6 +207,8 @@ _SPEC: Dict[str, Any] = {
         "floats": (lambda v: isinstance(v, bool), "true or false"),
         "line_directives": (lambda v: isinstance(v, bool), "true or false: #line directives pointing at the .kif"),
         "fold_notes": (lambda v: isinstance(v, bool), "true or false: a `/* kif: kept, why */` comment where a temporary was not folded (default true)"),
+        "doc_comments": (lambda v: isinstance(v, bool), "true or false: the `//` comment above a function becomes a `/** */` comment on its prototype and definition (default true)"),
+        "body_comments": (lambda v: isinstance(v, bool), "true or false: the `//` lines above a statement are written as `/* */` comments where its `#line` marker is (default true)"),
         "*": (lambda v: isinstance(v, (bool, int, str)), "a bool, integer or string (a custom flag)"),
     },
     "cfg": (

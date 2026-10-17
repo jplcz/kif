@@ -1,0 +1,35 @@
+// How source comments reach the generated C (docs/kif-c-backends.md, "Source comments").
+// A `//` run directly above a function becomes a `/** */` block on its prototype and definition.
+// It is Markdown; a `*/` in it is written `* /` so it cannot end the C comment early.
+
+// Detached by the blank line above: not the function's documentation, so this one has none.
+
+/// Sums the multiples of `step` below `n`.
+/// Wraps on overflow, like every `u32` add.
+#[export]
+fn total(n: u32, step: u32) -> u32 {
+    // a comment above a statement follows that statement's #line marker
+    let mut t: u32 = 0;
+    // a run of comment lines
+    // stays together, in order
+    let mut i: u32 = 0;
+    while i < n {
+        // comments inside loops are written once, where the statement is
+        t += i;
+        i += step;
+    }
+    // the last statement
+    t
+}
+
+fn one(a: u32) -> u32 { a }
+
+fn pick(a: u32, b: u32) -> u32 {
+    // each branch keeps its own comments
+    if a > b {
+        // the larger one
+        return a;
+    }
+    // otherwise b
+    b
+}

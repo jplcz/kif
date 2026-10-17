@@ -503,3 +503,34 @@ kernel compile); plain `c` does not, because its build flags are not ours.
 **`KIF_INLINE`.** The helpers in `kif_c.h` are declared `KIF_INLINE`, which is `static __inline __attribute__((always_inline))`
 on GCC and Clang (so even `-O0` builds inline them, with no call in the debugger) and plain `static __inline` elsewhere. Define
 `KIF_INLINE` before including the header to override it.
+
+## Source comments
+
+```kif
+// Adds two numbers; the text is Markdown.     <- every `//` line directly above the function (or its #[attributes])
+#[export]
+fn add(a: u32, b: u32) -> u32 { a + b }
+```
+
+becomes, on the prototype in `<stem>_proc.h` and on the definition in `<stem>_proc.c`:
+
+```c
+/**
+ * Adds two numbers; the text is Markdown.
+ */
+extern uint32_t add(uint32_t a, uint32_t b);
+```
+
+Comments inside a body follow the `#line` markers: where the emitter writes the marker for a source line, the `//` lines directly
+above that line are written after it as `/* ... */` lines, once each:
+
+```c
+#line 6 "d.kif"
+	/* start at zero */          // the `// start at zero` above `let mut t: u32 = 0;`
+	t = ((uint32_t)0);
+```
+
+Rationale: the header is the API a C caller reads, so the documentation travels with it; a body comment explains the statement it sits
+above, and the marker is already where the generated code is tied to that source line (it also survives folding and structuring,
+which only move code, not the comment lines). A blank line detaches a comment. Not carried over: trailing comments (`x = 1; // why`)
+and comments on types. Turn them off with `features.doc_comments: false` (function docs) and `features.body_comments: false` (bodies).

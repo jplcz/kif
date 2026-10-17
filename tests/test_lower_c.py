@@ -1146,3 +1146,38 @@ def test_ir_emitter_line_directives():
     text = lower_c.lower(analyze("t.kif", src, cfg_env=t.cfg_env()), t, "t")["t_proc.c"]
     body = text[text.index("t_hit("):]
     assert re.search(r'\n#line \d+ "t.kif"\n\t\w+ =', body)
+
+
+def test_function_doc_comments_reach_the_c_output():
+    src = "// Adds two numbers.\n// Never `*/` breaks out.\n#[export]\nfn add(a: u32, b: u32) -> u32 { a + b }\n\nfn plain(a: u32) -> u32 { a }\n"
+    t = target.load("c")
+    files = lower_c.lower(analyze("d.kif", src, cfg_env=t.cfg_env()), t, "d")
+    assert "/**\n * Adds two numbers.\n * Never `* /` breaks out.\n */\nextern uint32_t add(" in files["d_proc.h"]
+    assert "/**\n * Adds two numbers." in files["d_proc.h"] and "/**\n * Adds two numbers." in files["d_proc.c"]
+    assert files["d_proc.h"].count("/**") == 1  # `plain` has no comment above it
+    off = target.load("c")
+    off.data.setdefault("features", {})["doc_comments"] = False
+    assert "Adds two numbers" not in "".join(lower_c.lower(analyze("d.kif", src, cfg_env=off.cfg_env()), off, "d").values())
+
+
+def test_body_comments_follow_the_line_markers():
+    src = "// Doc.\nfn f(a: u32) -> u32 { a }\n\nfn g(n: u32) -> u32 {\n    // start at zero\n    let mut t: u32 = 0;\n    // walk\n    // up\n    t += n;\n    t\n}\n"
+    t = target.load("c")
+    c = lower_c.lower(analyze("d.kif", src, cfg_env=t.cfg_env()), t, "d")["d_proc.c"]
+    assert '#line 6 "d.kif"\n\t/* start at zero */\n\tt = ' in c
+    assert '#line 9 "d.kif"\n\t/* walk */\n\t/* up */\n' in c
+    assert c.count("Doc.") == 1  # a one-line body does not repeat the function's own comment
+    off = target.load("c")
+    off.data.setdefault("features", {})["body_comments"] = False
+    assert "start at zero" not in lower_c.lower(analyze("d.kif", src, cfg_env=off.cfg_env()), off, "d")["d_proc.c"]
+
+
+def test_comment_corpus_case_lowers_its_comments():
+    path = Path(__file__).parent / "c" / "comments.kif"
+    t = target.load("c")
+    files = lower_c.lower(analyze(str(path), path.read_text(), cfg_env=t.cfg_env()), t, "comments")
+    c, h = files["comments_proc.c"], files["comments_proc.h"]
+    assert "/**\n * Sums the multiples of `step` below `n`.\n * Wraps on overflow, like every `u32` add.\n */\nextern uint32_t total(" in h
+    assert "\t/* a run of comment lines */\n\t/* stays together, in order */\n" in c
+    assert c.count("comments inside loops are written once") == 1
+    assert "\t\t/* the larger one */\n\t\treturn a;" in c and "detached" not in c.lower()

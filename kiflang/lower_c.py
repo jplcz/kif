@@ -22,6 +22,8 @@ from dataclasses import fields as dc_fields
 from typing import Dict, List, Optional, Set, Tuple
 
 from . import ast
+from . import astutil
+from . import lexer
 from . import cfg
 from . import diagnostics as dg
 from . import facts
@@ -411,6 +413,45 @@ class Lowerer:
     def lineno(self, node) -> int:
         r = getattr(node, "range", None)
         return r.start.line + 1 if r is not None else 0
+
+    def doc_comment(self, node) -> str:
+        """The `//` comment lines directly above a declaration, as a C block comment (empty when there are none or `features.doc_comments` is false)."""
+        src = getattr(self.mod, "source", "") if self.mod else ""
+        if not src or not self.t.flag("doc_comments", True):
+            return ""
+        text = astutil.doc_above(src.split("\n"), node)
+        if not text:
+            return ""
+        body = "\n".join((" * " + ln).rstrip() for ln in text.replace("*/", "* /").split("\n"))
+        return f"/**\n{body}\n */\n"
+
+    def doc_lines(self, node) -> Set[int]:
+        """Indexes of the source lines of the doc comment above `node`, which a one-line body must not repeat."""
+        src = getattr(self.mod, "source", "") if self.mod else ""
+        if not src or node is None or getattr(node, "range", None) is None:
+            return set()
+        lines = src.split("\n")
+        out: Set[int] = set()
+        i = astutil.decl_line(lines, node) - 1
+        while i >= 0 and lexer.comment_text(lines[i]) is not None:
+            out.add(i)
+            i -= 1
+        return out
+
+    def comments_above(self, line: int, seen: Set[int]) -> List[str]:
+        """The `//` lines directly above the 1-based source `line`, oldest first, that are not in `seen` yet (their line indexes are added to it).
+        The statements of a body use this where they emit a `#line` marker, so the author's comments follow the lines they annotate."""
+        src = getattr(self.mod, "source", "") if self.mod else ""
+        if not src or not self.t.flag("body_comments", True):
+            return []
+        lines = src.split("\n")
+        out: List[str] = []
+        i = line - 2
+        while 0 <= i < len(lines) and i not in seen and (text := lexer.comment_text(lines[i])) is not None:
+            seen.add(i)
+            out.append(text)
+            i -= 1
+        return [f"/* {t.replace('*/', '* /')} */".replace("/*  */", "/**/") for t in reversed(out)]
 
     def line_directive(self, node) -> None:
         if self.t.flag("line_directives") and getattr(node, "range", None) is not None:
@@ -1158,7 +1199,7 @@ static __inline void kif_opt_{tag}_reset({O} *o)
         text = ir_c.emit_body(self, fn.ir, fn.cnames)
         if text is None:
             raise self.err(f"`{f.name.text}` is not lowered to C: {self.ir_bails.get(fn.ir.name, 'unsupported')}", f)
-        return f"{sig}\n{{\n{text}\n}}"
+        return f"{self.doc_comment(f)}{sig}\n{{\n{text}\n}}"
 
     def enum_cast_helpers(self) -> None:
         for name in sorted(self.cast_enums):
@@ -1875,7 +1916,7 @@ static __inline void kif_str_drop(struct kif_str *s)
             # `#[export]` functions and every method are external symbols defined in `<stem>_proc.c` (a method's address goes into
             # tables such as kobj classes); free functions are `static __inline` in the header
             external = not has_attr(it.attrs, "inline") or has_attr(it.attrs, "export") or id(it) in self.owner
-            protos.append(("extern " if external else "static __inline ") + self.signature(it, False) + ";")
+            protos.append(self.doc_comment(it) + ("extern " if external else "static __inline ") + self.signature(it, False) + ";")
             if self.twinned(it):
                 protos.append(("extern " if external else "static __inline ") + self.signature(it, False, nofacts=True) + ";")
             if it.is_gen:

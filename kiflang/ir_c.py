@@ -125,6 +125,7 @@ class _Emit:
         self.strs: Dict[int, str] = {}  # temps holding a string literal: only a `panic!` message uses one so far
         self.errs: Dict[int, str] = {}  # temps holding a reloco `error::<name>`: the C errno value it stands for
         self.rinc: Dict[int, str] = {}  # `lo..=hi` iterators: the C type of the bounds
+        self.comment_seen: Set[int] = lw.doc_lines(fn.node)  # source lines whose comment was written (the function's own doc to begin with): a comment is written once
         self.last_line = 0  # the line of the latest instruction that has a source position
         self.ctor: Optional[ir.Local] = None
         self.allocs: Set[int] = set()  # temps holding `default_allocator()`: never materialised
@@ -462,6 +463,8 @@ class _Emit:
         line = lw.lineno(i.site)
         if line and line != self.last_line and lw.t.flag("line_directives") and getattr(i.site, "range", None) is not None:
             self.out.append(f'#line {line} "{lw.file}"')
+        if line and line != self.last_line and getattr(i.site, "range", None) is not None:
+            self.out += [f"\t{c}" for c in lw.comments_above(line, self.comment_seen)]
         self.last_line = line or self.last_line
         if isinstance(i, ir.Cell):
             d = lw.cells.get(i.name)

@@ -27,3 +27,5 @@ Add a case by dropping in new files; no test code changes.
 Output: each run leaves the compiler's actual output in `tests/c/out/` (git-ignored): `NAME/NAME_proc.h` (and `NAME_proc.c` when
 there are methods, `#[export]` functions or cells), the compiled `driver`, `gcc.log`, `driver.out`; a refused case leaves `NAME.refused` with the message.
 Open those files to see exactly what the compiler generated.
+
+`comments.kif` shows how `//` comments are lowered: function documentation becomes a `/** */` block on the prototype and the definition, and comments above statements follow their `#line` markers. Read `out/comments/comments_proc.{h,c}` after a run; the rules are in docs/kif-c-backends.md, "Source comments".
