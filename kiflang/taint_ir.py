@@ -241,6 +241,44 @@ def explain(fn: ir.Function) -> List[Note]:
     return sorted(out, key=lambda n: (n.line, n.col, n.kind))
 
 
+def report(mod: ir.Module, file: str) -> str:
+    """The taint audit of a module as text, for a security review (`kif ir --taint-report`): every sanitizer and how often it is called,
+    every `#[trusted]` function, every `untaint!` reason, every speculation barrier, and the tainted sources. Run it on IR the
+    `barriers` pass has been over, so the implicit barriers are included."""
+    notes = [n for f in mod.functions for n in explain(f)]
+    calls: Dict[str, int] = {}
+    for f in mod.functions:
+        for _, i in f.instrs():
+            if isinstance(i, ir.Call) and i.taint == "untaint":
+                calls[i.callee] = calls.get(i.callee, 0) + 1
+    def named(attr: str) -> List[Tuple[int, str, bool]]:
+        out = []
+        for f in mod.functions:
+            n = f.node
+            if n is not None and any(a.name.text == attr for a in getattr(n, "attrs", [])):
+                out.append((n.name.range.start.line + 1, f.name, any(a.name.text == "untaint" and a.raw is not None for a in n.attrs)))
+        return sorted(out)
+
+    lines = [f"Taint report: {file}", ""]
+    san = named("untaint")
+    lines.append(f"Sanitizers (#[untaint]): {len(san)}")
+    lines += [f"  {file}:{ln}: {name}{' (trusted: body not checked)' if trusted else ''}, {calls.get(name, 0)} call site(s)" for ln, name, trusted in san]
+    trusted_exports = named("trusted")
+    lines += ["", f"Exported functions opted out of taint.exports (#[trusted]): {len(trusted_exports)}"]
+    lines += [f"  {file}:{ln}: {name}" for ln, name, _ in trusted_exports]
+    sites = [n for n in notes if n.kind == "untaint"]
+    lines += ["", f"untaint! sites: {len(sites)}"]
+    lines += [f"  {file}:{n.line}:{n.col}: {n.text} [{n.function}]" for n in sites]
+    bars = [n for n in notes if n.kind == "barrier"]
+    implicit = sum("implicit" in n.text for n in bars)
+    lines += ["", f"Speculation barriers: {len(bars)} ({len(bars) - implicit} explicit, {implicit} implicit)"]
+    lines += [f"  {file}:{n.line}:{n.col}: {n.text} [{n.function}]" for n in bars]
+    src = [n for n in notes if n.kind == "source"]
+    lines += ["", f"Tainted sources: {len(src)}"]
+    lines += [f"  {file}:{n.line}:{n.col}: {n.text} [{n.function}]" for n in src]
+    return "\n".join(lines) + "\n"
+
+
 def _is_barrier(i, kind: str) -> bool:
     return isinstance(i, ir.Barrier) and i.kind == kind and bool(i.why)
 

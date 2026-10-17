@@ -168,6 +168,7 @@ def _function(fn: ir.Function) -> Dict[str, Any]:
         "blocks": [{"id": b.id, "label": b.label, "instrs": [_item(i) for i in b.instrs], "term": _item(b.term) if b.term else None}
                    for b in fn.blocks],
         "elided": [_item(c) for c in fn.elided],
+        "taint_sinks": sorted(fn.taint_sinks),
     }
 
 
@@ -263,6 +264,11 @@ class _Reader:
             t = b.get("term")
             blk.term = self.item(t, _TERMS, "term", what) if t is not None else None
         fn.elided = [self.item(c, _INSTRS, "instr", what) for c in d.get("elided", [])]
+        sinks = d.get("taint_sinks")
+        if sinks is not None:
+            if not isinstance(sinks, list) or not all(isinstance(x, str) for x in sinks):
+                raise SerialError(f"{what}: 'taint_sinks' is not a list of strings")
+            fn.taint_sinks = frozenset(sinks)
         return fn
 
 

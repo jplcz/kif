@@ -403,6 +403,19 @@ docs/kif-ir-passes.md): deterministic, cacheable, parallel.
 
 - Diagnostics flow through `check_module` and the LSP like `KIFI0xx`.
 - Hover over a value shows `tainted (from parameter 'n')`.
+- `kif ir FILE --taint-report` is the audit for a security review, one text page per file: the sanitizers (`#[untaint]`, trusted ones
+  marked) with their call-site counts, the `#[trusted]` exports, every `untaint!` site with its reason, every speculation barrier
+  (explicit and implicit, with counts) and every tainted source. It runs the default pipeline, so the implicit barriers are in it.
+  Rationale: a reviewer signs off the *list* of places where the guarantee is weakened or paid for, not the whole program.
+
+  ```
+  Taint report: t.kif
+  Sanitizers (#[untaint]): 1
+    t.kif:2: s, 1 call site(s)
+  untaint! sites: 1
+    t.kif:11:13: s(): masked to 0..3 [g]
+  ```
+
 - `kif ir FILE --explain-taint` prints, per function, the taint of every temp and the origin chain (like `--explain-checks`).
 - **Completion and signature help.** After `ct::` the editor offers the five intrinsics with their synthesized signatures
   (`fn ct::select(c: bool, a: T, b: T) -> T`) and parameter help while typing the arguments; `ct` is also offered as a module name.

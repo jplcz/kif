@@ -290,3 +290,18 @@ def test_ir_explain_taint_lists_sources_barriers_and_untaint_reasons(tmp_path):
     assert "source: parameter 't' is tainted [g]" in out and "barrier: fence (explicit: spec::barrier())" in out
     assert "untaint: s(): masked to 0..3" in out and "source: result of get() is tainted" in out
     assert out.count("implicit: tainted element load") == 2
+
+
+def test_ir_taint_report_summarises_the_audit_surface(tmp_path):
+    f = tmp_path / "t.kif"
+    f.write_text('#[untaint]\nfn s(#[tainted] x: usize) -> usize { x & 3 }\n#[tainted_result]\nfn get() -> usize { 1 }\n'
+                 '#[export]\n#[trusted]\nfn e(a: u32) -> u32 { a }\n'
+                 '#[tainted_result]\nfn g(#[tainted] t: &[u32], c: usize) -> u32 {\n    spec::barrier();\n    let k = untaint!("masked to 0..3", s(get()));\n    t[c] + t[k]\n}\n')
+    r = kif("ir", str(f), "--taint-report")
+    assert r.returncode == 0, r.stderr
+    out = r.stdout
+    assert "Sanitizers (#[untaint]): 1" in out and ": s, 1 call site(s)" in out
+    assert "Exported functions opted out of taint.exports (#[trusted]): 1" in out and ": e" in out
+    assert "untaint! sites: 1" in out and "s(): masked to 0..3 [g]" in out
+    assert "Speculation barriers: 3 (1 explicit, 2 implicit)" in out
+    assert "Tainted sources: 3" in out   # s(x), g(t), the result of get()

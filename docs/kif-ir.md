@@ -185,6 +185,7 @@ kif ir FILE --ast --format json      # the syntax tree: {"format": "kif-ast", "v
   `{"range": [line, col, line, col]}`. Only syntax is stored, not what the checker computed (types, moves, resolved names), so a
   consumer checks the tree again. The decoder demands exactly the fields of the class.
 - **Versioning.** `version` is checked on decode; a change of the field set of a node or instruction bumps it.
+- **Taint.** A function carries `taint_sinks` (the target's `taint.sinks`, decided by the checker); an older file without it gets the default list. `Local.taint`, `Call.taint`, `Call.reason` and `Barrier.why` are serialized like any other field, so the `taint` and `barriers` passes give the same answer on a loaded file.
 - **Limits.** CBOR nesting is bounded (4096 for a tree, 64 for the flat IR) and a deeper tree is a `SerialError`, not a crash.
 - **Why not pickle.** The encoding is the contract: a stable, validated, language-neutral form that a precompiled module (`.kifm`)
   can later embed, with no code execution on load.

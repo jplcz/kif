@@ -622,3 +622,19 @@ def test_target_policy_reaches_the_cfg_environment_and_is_validated():
     bad = lambda **k: [m for m in target.validate({"taint": k}) if m.startswith("taint.")]
     assert bad(exports="all", sinks=["div", "mul"]) == []
     assert bad(exports="some") and bad(sinks=["sqrt"])
+
+
+# -- the IR file keeps everything the taint pass reads
+
+def test_ir_round_trip_keeps_untaint_reasons_and_the_sink_policy():
+    from kiflang import ir, serial
+
+    src = CLEAN + '#[tainted_result]\nfn f(#[tainted] n: usize, t: &[u32]) -> u32 { let a = untaint!("masked to 0..3", clean(n)); t[a] * 2 }\n'
+    r = analyze("t.kif", src, cfg_env=policy_env(taint_sinks={"mul"}))
+    mod = ir.build_module(r.tree)
+    back = serial.ir_from_data(serial.ir_to_data(mod))
+    f = next(x for x in back.functions if x.name == "f")
+    assert f.taint_sinks == frozenset({"mul"})
+    calls = [i for _, i in f.instrs() if isinstance(i, ir.Call) and i.taint]
+    assert [(c.taint, c.reason) for c in calls] == [("untaint", "masked to 0..3")]
+    assert f.params[0].taint

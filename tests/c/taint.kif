@@ -1,0 +1,28 @@
+// Taint: tainted data reaches an index only through an #[untaint] function; `ct::` intrinsics and barriers become branch-free C.
+// The table is read with a clean index, so every call below also has to survive -fsanitize=undefined.
+
+// Verifier: maps any value to 0..3 without a branch, then the caller records why that is enough.
+#[untaint]
+fn slot(#[tainted] x: usize) -> usize { x & 3 }
+
+// A clean-by-construction select: the result is the same under any secret, and no `if` appears in the C.
+fn pick(c: bool, a: u32, b: u32) -> u32 { ct::select(c, a, b) }
+fn same(a: u8, b: u8) -> bool { ct::eq(a, b) }
+fn less(a: i32, b: i32) -> bool { ct::lt(a, b) }
+
+// A tainted index goes through `slot` with a reason; the load of tainted table data gets an implicit value barrier.
+// (The generic `c` target has no `taint.fence`, because lfence is not portable C; fences are covered in tests/test_lower_c.py.)
+#[tainted_result]
+fn lookup(#[tainted] t: &[u32], c: usize) -> u32 {
+    let k = untaint!("slot() masks the index to 0..3, and t has 4 entries by contract", slot(c));
+    t[k]
+}
+
+// A tainted value may be combined branch-free and handed to an #[untaint] function that makes it a clean code.
+#[untaint]
+fn nonzero(#[tainted] v: u32) -> u32 { ct::select(ct::eq(v, 0), 0, 1) }
+
+fn classify(#[tainted] t: &[u32], c: usize) -> u32 {
+    let v = lookup(t, c);
+    untaint!("nonzero() reduces the value to 0 or 1", nonzero(v))
+}
