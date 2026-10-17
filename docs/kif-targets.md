@@ -114,6 +114,8 @@ a loop in `extends` is an error. Check with `kif target check`; show the result 
 | `assert.header` | string | Header declaring what the macro calls. |
 | `errno` | object | The `cresult` convention. |
 | `errno.style` | `none`, `positive`, `negative` | Default style; an interface's `errno(..)` wins. FreeBSD returns `+errno`, Linux `-errno`. |
+| `attest` | object | IR attestation (docs/kif-module-contracts.md section 13). |
+| `attest.section` | string | Linker section name (e.g. `kif_attest`). Each C function then also gets a `static const char[]` `"sha256:<full hex> <name>"` in it, so the raw-IR hash (docs/kif-module-contracts.md section 13) survives into the object file. Unset: none emitted. C targets only. |
 | `errno.header` | string | Where the errno numbers come from. |
 | `errno.map` | map | reloco `error` name -> errno macro or number, overriding the built-in table (`allocation_failed` -> `ENOMEM`, `out_of_range` -> `ERANGE`, `not_found` -> `ENOENT`, ...; the table is `ERROR_ERRNO` in `kiflang/target.py`). Unlisted errors keep the default; an unknown error name is rejected. Example: `{"timed_out": "EWOULDBLOCK"}`. Errors that share an errno still cannot be told apart in a `match` (refused). |
 | `taint` | object | Speculation barriers for the taint feature (docs/kif-taint.md section 7). Absent: code that needs one is refused at lowering with an error naming the key; nothing is silently a no-op. The built-in `c` target sets `barrier` for GCC/Clang. |

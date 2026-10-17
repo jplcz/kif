@@ -359,3 +359,78 @@ def test_cli_check_applies_the_policy(pki, tmp_path, forced, capsys):
     assert "KIF019" in out.out + out.err
     assert main(["check", str(tmp_path / "m.kif"), "--sysroot", str(root), "--signing", "require"]) == 1
     assert main(["check", str(tmp_path / "m.kif"), "--sysroot", str(root), "--signing", "off"]) == 0
+
+
+# ---------------------------------------------------------------- .kifa (docs/kif-module-contracts.md section 13.2, item 4)
+
+SRC = "fn twice(x: u32) -> u32 { 2 * x }\nfn keep(x: u32) -> u32 { x }\n"
+
+
+def _attest(tmp_path, pki, src=SRC, sign=True):
+    from kiflang import attest
+    from kiflang.symbols import analyze
+
+    mod = analyze("a.kif", src)
+    return attest.build(mod, "c", None, (read(pki, "vendor.pem"), None) if sign else None), mod
+
+
+def _verify(args):
+    from kiflang import __main__ as m
+
+    return m.main(["verify", *args])
+
+
+def test_kifa_is_deterministic_and_matches_the_ir_hash(pki, tmp_path, forced):
+    from kiflang import attest, irhash, passes
+
+    a, mod = _attest(tmp_path, pki)
+    b, _ = _attest(tmp_path, pki)
+    assert a == b
+    h = attest.decode(a)
+    assert h["functions"] == dict(irhash.module_hashes(passes.run_module(mod.tree, []).module))
+    assert h["target"] == "c" and "signature" in h
+
+
+def test_kifa_reports_match_changed_added_removed(pki, tmp_path, forced):
+    from kiflang import attest
+    from kiflang.symbols import analyze
+
+    data, _ = _attest(tmp_path, pki)
+    now = analyze("a.kif", "fn twice(x: u32) -> u32 { 3 * x }\nfn keep(x: u32) -> u32 { x }\nfn new(x: u32) -> u32 { x }\n")
+    assert dict(attest.compare(attest.decode(data), now)) == {"twice": "changed", "keep": "match", "new": "added"}
+    only = analyze("a.kif", "fn twice(x: u32) -> u32 { 2 * x }\n")
+    assert dict(attest.compare(attest.decode(data), only)) == {"twice": "match", "keep": "removed"}
+
+
+def test_kifa_verify_command_trust_and_tamper(pki, tmp_path, forced, capsys):
+    data, _ = _attest(tmp_path, pki)
+    (tmp_path / "a.kifa").write_bytes(data)
+    (tmp_path / "a.kif").write_text(SRC)
+    base = [str(tmp_path / "a.kifa")]
+    assert _verify([*base, "--source", str(tmp_path / "a.kif"), "--trust", str(pki / "vendor.pub")]) == 0
+    assert _verify([*base, "--trust", str(pki / "other.pub")]) == 1  # untrusted
+    (tmp_path / "a.kif").write_text(SRC.replace("2 * x", "3 * x"))
+    assert _verify([*base, "--source", str(tmp_path / "a.kif"), "--trust", str(pki / "vendor.pub")]) == 1
+    assert "changed" in capsys.readouterr().out
+    flipped = bytearray(data)
+    flipped[-5] ^= 1
+    (tmp_path / "bad.kifa").write_bytes(bytes(flipped))
+    assert _verify([str(tmp_path / "bad.kifa"), "--trust", str(pki / "vendor.pub")]) == 1
+    assert "bad:" in capsys.readouterr().out
+    unsigned, _ = _attest(tmp_path, pki, sign=False)
+    (tmp_path / "u.kifa").write_bytes(unsigned)
+    assert _verify([str(tmp_path / "u.kifa")]) == 1
+    assert "unsigned" in capsys.readouterr().out
+
+
+def test_attest_section_emits_the_hash_into_the_c(tmp_path):
+    import json
+
+    from kiflang import kifc
+
+    (tmp_path / "t.json").write_text(json.dumps({"extends": "c", "name": "att", "attest": {"section": "kif_attest"}}))
+    (tmp_path / "a.kif").write_text(SRC)
+    assert kifc.main(["--c", str(tmp_path / "o"), "--target", str(tmp_path / "t.json"), "--no-project", str(tmp_path / "a.kif")]) == 0
+    c = (tmp_path / "o" / "a_proc.c").read_text()
+    assert 'section("kif_attest")' in c and '" "' not in c
+    assert " twice\";" in c and " keep\";" in c

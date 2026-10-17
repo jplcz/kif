@@ -6,7 +6,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later WITH LicenseRef-Kif-Output-Exception
 
 # Safety contracts and security boundaries in `.kifm` modules
 
-Status: **design**; stages 1 (the `security` and `compiler` sections, `security_digest`, the cross-check), 2 (effective taint read by the checks), 3 (KIFI040, KIFI041, KIF016, KIF017, KIFT012), 4 (`inspect`, audit labels, hover origin) 5 (signing, verification, import policy, project config, CMake) and 6a (`kif ir --hash`) are implemented
+Status: **design**; stages 1 (the `security` and `compiler` sections, `security_digest`, the cross-check), 2 (effective taint read by the checks), 3 (KIFI040, KIFI041, KIF016, KIF017, KIFT012), 4 (`inspect`, audit labels, hover origin) 5 (signing, verification, import policy, project config, CMake) 6a (`kif ir --hash`) and 6b (the C comment) and 6c (`.kifa`, `verify --source`, `attest.section`) are implemented
 (`kiflang/modsec.py`, `kiflang/prover_id.py`, `kiflang/irhash.py`, `tests/test_modsec.py`, `tests/test_irhash.py`); the rest is not. Related: `docs/kif-proc-language.md` section 15 (the `.kifm` format),
 `docs/kif-taint.md` (the taint feature), `docs/kif-ir.md` (the IR file).
 
@@ -459,7 +459,7 @@ comments, names or positions around it, so every copy of it in every project has
 
 1. **`kif ir FILE --hash`**: one line per function, `sha256:<hex>  <name>  <file>:<line>`. A reviewer diffing two releases sees exactly which
    functions *meaningfully* changed.
-2. **The generated C** carries `/* kif: ir sha256:<first 16 hex> */` above each function. It is a comment (the C compiler ignores it), so it does
+2. **The generated C** (implemented, stage 6b; the hash is taken before any pass, so it equals `kif ir --hash`) carries `/* kif: ir sha256:<first 16 hex> */` above each function. It is a comment (the C compiler ignores it), so it does
    not change the object code, but it ties a line of generated code to the attestation. With a target key `attest.section` the C backend
    also emits a constant `{ name, full hash }` entry into that linker section, so the hash survives into the binary and
    `kif verify-object` (a later tool) can read it without trusting the comment.
@@ -492,7 +492,10 @@ builds nobody has to take the signer's word; a `.kifm` consumer, who has no bodi
 
 ### 13.5 Staging
 
-**Stage 6a is implemented** (`kiflang/irhash.py`, `kif ir FILE --hash`, `tests/test_irhash.py`); the C comment, `.kifm` key, `.kifa` and `verify` remain.
+**Stage 6 is implemented**: 6a `kiflang/irhash.py` and `kif ir FILE --hash`; 6b the C comment and the `.kifm` `ir_hash` key; 6c `kiflang/attest.py`
+(`kif ir FILE --attest -o F.kifa [--target T --profile P --sign K --cert C]`, `python -m kiflang verify F.kifa [--source F.kif]`) and the target key
+`attest.section` (a constant string per function in that linker section). Tests: `tests/test_irhash.py`, `tests/test_modsign.py`. `kif verify-object`
+(reading the section back from an object file) is not written; `strings` or `objcopy` read it.
 
 Stage 6, after signing: (a) canonical form and `--hash`, with the classification test of 13.4 (7); (b) the C comment and the `ir_hash` key of
 `security.functions`; (c) the `.kifa` writer, `verify`, and the `attest.section` target key. Stage (a) is independent of signing and can be done

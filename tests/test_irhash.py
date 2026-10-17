@@ -91,3 +91,20 @@ def test_every_ir_field_is_classified():
         assert len(irhash.classified(name)) == len(fields), f"{name}: a field is both hashed and excluded"
     instrs = {c.__name__ for c in vars(ir).values() if isinstance(c, type) and issubclass(c, (ir.Instr, ir.Term)) and c not in (ir.Instr, ir.Term)}
     assert instrs <= set(irhash.HASHED), instrs - set(irhash.HASHED)
+
+
+def test_generated_c_carries_the_ir_hash_comment(tmp_path):
+    """Stage 6b: every C function is stamped `/* kif: ir sha256:<16 hex> */`, equal to the `--hash` prefix, and comments/names don't change it."""
+    from kiflang import kifc
+
+    def stamped(src: str):
+        f = tmp_path / "a.kif"
+        f.write_text(src)
+        out = tmp_path / "o"
+        assert kifc.main(["--c", str(out), "--no-project", str(f)]) == 0
+        return (out / "a_proc.c").read_text()
+
+    text = stamped("fn twice(x: i32) -> i32 { 2 * x }\n")
+    (h,) = hashes("fn twice(x: i32) -> i32 { 2 * x }\n").values()
+    assert f"/* kif: ir {h[:23]} */\nint32_t" in text or f"/* kif: ir {h[:23]} */" in text
+    assert f"/* kif: ir {h[:23]} */" in stamped("// note\nfn twice(x: i32) -> i32 {\n    2 * x // doubled\n}\n")

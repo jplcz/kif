@@ -173,6 +173,10 @@ _SPEC: Dict[str, Any] = {
         "map": (lambda v: _str_map(v) and all(k in ERROR_ERRNO for k in v) and all(re.fullmatch(r"[A-Za-z_]\w*|\d+", x) for x in v.values()),
                 "a map from a reloco `error` name to an errno macro or number, e.g. {\"timed_out\": \"EWOULDBLOCK\"}; unlisted errors use the defaults"),
     },
+    "attest": {  # IR attestation (docs/kif-module-contracts.md section 13.2)
+        "section": (lambda v: isinstance(v, str) and re.fullmatch(r"[A-Za-z_.][\w.]*", v) is not None,
+                    "linker section for one constant `\"sha256:<hex> <name>\"` string per function (its raw-IR hash), so the attestation survives into the object file; a plain section name"),
+    },
     "taint": {  # speculation barriers (docs/kif-taint.md section 7); a target that lacks one refuses code that needs it
         "barrier": (_is_str, "C statement hiding the variable {v} from the optimizer and from speculation, e.g. `__asm__ volatile (\"\" : \"+r\"({v}))`"),
         "nospec": (_is_str, "C expression clamping index {i} below {n} even under speculation (the array_index_nospec idiom)"),
@@ -283,7 +287,7 @@ def validate(data: Any, where: str = "") -> List[str]:
         if "custom" in (cells.get("tls"), cells.get("per_cpu")) and not cells.get("header"):
             out.append("cells.header: required when a provider is custom")
         if data.get("language") == "cxx":
-            for sect in ("alloc", "panic", "assert", "errno", "cells"):
+            for sect in ("alloc", "panic", "assert", "errno", "cells", "attest"):
                 if data.get(sect):
                     out.append(f"{sect}: C++ targets run on reloco, which provides this (its porting layer); the section is for C targets")
         alloc = data.get("alloc")

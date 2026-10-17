@@ -29,6 +29,7 @@ from . import diagnostics as dg
 from . import facts
 from . import ir
 from . import ir_c
+from . import irhash
 from . import passes
 from . import types as T
 from .astutil import attr_name_arg, find_attr, has_attr, walk
@@ -125,6 +126,7 @@ class Fn:
         self.value_self = False  # `self` by value is a pointer in C
         self.rlocals: Dict[str, Tuple[Optional[str], Optional[str]]] = {}  # `let r = <result call>`: C name of rc -> (value var, T)
         self.returns_void = True
+        self.ir_hash: Optional[str] = None  # attestation hash of the raw IR (before any pass), `sha256:<hex>`
         self.ir: Optional[ir.Function] = None  # the function's IR after the pass pipeline (None when the builder could not handle it)
         self.cnames: List[str] = []  # the C parameter names in order (a twinned function's guarded entry forwards them)
 
@@ -341,6 +343,7 @@ class Lowerer:
             fn = ir.build_function(f, self.requirement_resolver, self.twinned(f), frozenset(self.dropable), self.cur_owner, self.cells)
         except ir.Unsupported:
             return
+        self.fn.ir_hash = irhash.ir_hash(fn)
         ran = passes.run_function(fn, passes.pipeline(self.t.get("ir.passes", "default") + ",c_refusals"), self.requirement_resolver,
                                  {"errno": self.t.get("errno.map") or {}, "access": {k: self.t.get(f"access.{k}", "prove") for k in ("index", "range", "optional", "div", "shift")}})
         self.fn.ir = fn
@@ -1199,7 +1202,14 @@ static __inline void kif_opt_{tag}_reset({O} *o)
         text = ir_c.emit_body(self, fn.ir, fn.cnames)
         if text is None:
             raise self.err(f"`{f.name.text}` is not lowered to C: {self.ir_bails.get(fn.ir.name, 'unsupported')}", f)
-        return f"{self.doc_comment(f)}{sig}\n{{\n{text}\n}}"
+        stamp = f"/* kif: ir {fn.ir_hash[:23]} */\n" if fn.ir_hash else ""
+        section = self.t.get("attest.section")
+        entry = ""
+        if section and fn.ir_hash:
+            # survives into the object file: read it with `kif verify-object` or `strings`; the comment above is not trusted by itself
+            entry = (f"\nstatic const char kif_attest_{self.fn_name(f)}[] __attribute__((used, section({c_string(section)}))) = "
+                     f"{c_string(f'{fn.ir_hash} {f.name.text}')};")
+        return f"{self.doc_comment(f)}{stamp}{sig}\n{{\n{text}\n}}{entry}"
 
     def enum_cast_helpers(self) -> None:
         for name in sorted(self.cast_enums):

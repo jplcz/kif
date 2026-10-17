@@ -18,7 +18,7 @@ import argparse
 import sys
 from typing import List, Optional
 
-from . import cfg, modfile, modsign, project, report, signpolicy, target
+from . import attest, cfg, modfile, modsign, project, report, signpolicy, target
 from .symbols import analyze
 from .sysroot import Sysroot, SysrootError
 
@@ -70,6 +70,7 @@ def make_parser() -> "tuple":
             p.add_argument("--trust", action="append", default=[], metavar="PEM", help="pinned public keys and certificates (repeatable)")
             p.add_argument("--revoked", action="append", default=[], metavar="PEM", help="revoked keys, certificates and CRLs (repeatable)")
             p.add_argument("--allow-revoked", action="append", default=[], metavar="FINGERPRINT", help="accept this revoked key or certificate anyway")
+            p.add_argument("--source", metavar="FILE.kif", help="for a .kifa: re-analyze this source and report each function as match, changed, added or removed")
     return ap, sub
 
 
@@ -92,7 +93,11 @@ def _verify(args) -> int:
     """`kiflang verify FILE.kifm`: who signed it and whether the consumer's trust list vouches for it. Exit 0 only when trusted."""
     try:
         with open(args.file, "rb") as f:
-            h = modfile.decode(f.read())
+            data = f.read()
+        attested = args.file.endswith(".kifa")
+        h = attest.decode(data) if attested else modfile.decode(data)
+        if args.source and not attested:
+            raise modsign.CryptoError("--source applies to a .kifa")
         crypto = modsign.backend()
         trust = modsign.load_list(args.trust) if args.trust else None
         revoked = modsign.load_list(args.revoked) if args.revoked else None
@@ -100,9 +105,16 @@ def _verify(args) -> int:
     except modsign.CryptoUnavailable as exc:
         print(f"kiflang: {exc}", file=sys.stderr)
         return 2
-    except (OSError, modfile.ModuleFileError, modsign.CryptoError) as exc:
+    except (OSError, modfile.ModuleFileError, attest.AttestError, modsign.CryptoError) as exc:
         print(f"kiflang: {args.file}: {exc}", file=sys.stderr)
         return 1
+    drift = 0
+    if args.source:
+        try:
+            drift = _compare(args, h)
+        except (OSError, SysrootError, cfg.CfgError, target.TargetError) as exc:
+            print(f"kiflang: {args.source}: {exc}", file=sys.stderr)
+            return 2
     if v.status == "unsigned":
         print(f"{args.file}: unsigned")
         return 1
@@ -113,7 +125,24 @@ def _verify(args) -> int:
         print(f"  certificate valid {v.validity[0]} to {v.validity[1]} (dates are reported, not enforced)")
     for n in v.notes:
         print(f"  note: {n}")
-    return 0 if v.status == "trusted" else 1
+    return 0 if v.status == "trusted" and not drift else 1
+
+
+def _compare(args, h) -> int:
+    """Print each attested function against the source's current IR; the number that are not `match`."""
+    sysroot = Sysroot(args.sysroot) if args.sysroot else Sysroot.shipped()
+    env = target.load(h["target"]).cfg_env([], h["profile"], None)
+    with open(args.source, encoding="utf-8") as f:
+        mod = analyze(args.source, f.read(), sysroot=sysroot, cfg_env=env)
+    errors = [d for d in mod.diagnostics if d.severity == 1]
+    for d in errors:
+        print(d.format(args.source), file=sys.stderr)
+    if errors:
+        raise OSError("the source has errors, so its IR cannot be attested")
+    rows = attest.compare(h, mod)
+    for name, status in rows:
+        print(f"  {status:8} {name}")
+    return sum(1 for _, s in rows if s != attest.MATCH)
 
 
 def _inspect(path: str) -> int:

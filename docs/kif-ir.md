@@ -333,6 +333,27 @@ sha256:f446ce79...e3b1  f  driver.kif:1
 sha256:f446ce79...e3b1  g  driver.kif:4     # same body as f (other name, comments, spacing): same hash
 ```
 
+The same hash is written above each generated C function as `/* kif: ir sha256:<first 16 hex> */`, and, when the target sets
+`attest.section`, as a constant string `"sha256:<hex> <name>"` in that linker section of the object file.
+
+### Standalone attestation (`.kifa`)
+
+```
+# Attest (and sign) the IR hashes of driver.kif for target freebsd-kernel; deterministic, so rebuilds are byte-identical.
+kif ir driver.kif --attest -o driver.kifa --target freebsd-kernel --sign vendor.pem --cert vendor.crt
+# A consumer with the source: is the signer trusted (--trust and --revoked as for a .kifm) and does each function still match?
+python3 -m kiflang verify driver.kifa --source driver.kif --trust vendor-ca.pem
+#   match    f
+#   changed  g        the body's IR differs from what was attested
+#   added    h        in the source, not attested
+#   removed  old      attested, no longer in the source
+# driver.kifa: trusted: signed by CN=Acme Drivers (sha256:...)
+```
+
+Exit 0 only when the signature is trusted **and** every function matches. A `.kifa` holds no source or comments, only
+`{magic "KIFA", version, target, profile, compiler, functions: {name: hash}, signature?}`; the signature, trust, revocation and
+`[signing]` rules are those of a `.kifm` (docs/kif-module-contracts.md section 11). A flipped byte makes it `bad`.
+
 Which IR fields are hashed and which are not is a table in `kiflang/irhash.py` (`HASHED`, `EXCLUDED`); a field added to the IR fails
 `tests/test_irhash.py` until it is classified. The design, with the planned signed attestation, is `docs/kif-module-contracts.md` section 13.
 

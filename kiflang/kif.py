@@ -140,6 +140,12 @@ def cmd_ir(args: argparse.Namespace) -> int:
     except passmgr.PassError as e:
         print(f"kif ir: {e}", file=sys.stderr)
         return 2
+    if args.attest and not args.output:
+        print("kif ir: --attest writes bytes; give -o FILE", file=sys.stderr)
+        return 2
+    if (args.sign or args.cert) and not args.attest:
+        print("kif ir: --sign and --cert need --attest", file=sys.stderr)
+        return 2
     if args.format == "cbor" and not args.output:
         print("kif ir: --format cbor writes bytes; give -o FILE", file=sys.stderr)
         return 2
@@ -153,6 +159,26 @@ def cmd_ir(args: argparse.Namespace) -> int:
         print(d.format(args.file), file=sys.stderr)
     if errors:
         return 1
+    if args.attest:
+        from . import attest, modsign
+
+        try:
+            if args.cert and not args.sign:
+                raise modsign.CryptoError("--cert needs --sign")
+            key = cert = None
+            if args.sign:
+                with open(args.sign, "rb") as f:
+                    key = f.read()
+                if args.cert:
+                    with open(args.cert, "rb") as f:
+                        cert = f.read()
+            data = attest.build(mod, args.target or "c", args.profile, (key, cert) if key is not None else None)
+        except (OSError, modsign.CryptoError, targetdef.TargetError) as e:
+            print(f"kif ir: {e}", file=sys.stderr)
+            return 2
+        with open(args.output, "wb") as f:
+            f.write(data)
+        return 0
     if args.ast:
         out = serial.dumps_ast(mod.tree, args.format == "cbor") if args.format != "text" else None
         if out is None:
@@ -490,6 +516,11 @@ def make_parser() -> "tuple":
     ir_.add_argument("--explain-checks", action="store_true", help="list every run-time check of the file as proved (with the proof) or kept (docs/kif-ir-passes.md)")
     ir_.add_argument("--taint-report", action="store_true", help="the taint audit for a security review: sanitizers and their call sites, #[trusted] functions, every untaint! reason, every barrier and tainted source (docs/kif-taint.md)")
     ir_.add_argument("--hash", action="store_true", help="one line per function: the sha256 of its raw IR, which ignores comments, names and positions (docs/kif-module-contracts.md, section 13)")
+    ir_.add_argument("--attest", action="store_true", help="write a .kifa attestation (name -> IR hash, optionally signed) to -o FILE (docs/kif-module-contracts.md, section 13.2)")
+    ir_.add_argument("--target", help="with --attest: the target recorded (a built-in name or .json file; default c)")
+    ir_.add_argument("--profile", help="with --attest: the profile recorded")
+    ir_.add_argument("--sign", metavar="KEY.pem", help="with --attest: sign with this Ed25519 private key (PKCS#8 PEM, read from the file only)")
+    ir_.add_argument("--cert", metavar="CERT", help="with --attest --sign: embed this certificate (PEM or DER) of the key")
     ir_.add_argument("--explain-taint", action="store_true", help="list the taint sources, every speculation barrier (written or inserted, with its reason) and every untaint! reason (docs/kif-taint.md)")
     ir_.add_argument("--coverage", action="store_true", help="report which functions the IR describes completely enough to emit code from (docs/kif-ir-codegen.md)")
     ir_.add_argument("--stats", action="store_true", help="print the time each pass took")

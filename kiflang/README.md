@@ -29,6 +29,7 @@ backend and the FreeBSD kobj output are not implemented yet.
 | `modfile.py`, `cbor.py` | Precompiled `.kifm` modules (bodies stripped, generics kept, digests, `security` and `compiler` sections) and the CBOR codec |
 | `modsec.py`, `prover_id.py` | The `.kifm` `security` section: every safety contract and security-boundary fact, written by the exporter and re-derived from the text by the reader (KIF014); the identity of the check machinery |
 | `modsign.py` | Signing and verifying `.kifm` files (Ed25519, X.509, CRL) through the host's crypto only: the `cryptography` package, else the `openssl` tool; no primitives of its own |
+| `attest.py` | `.kifa` standalone IR attestation: build, decode, compare with a source (`kif ir --attest`, `verify --source`) |
 | `irhash.py` | Meaning-based hash of a function's raw IR (`kif ir --hash`) |
 | `__main__.py` | `python -m kiflang check\|export\|modules\|inspect\|verify` |
 | `interp.py` | Tree-walking interpreter over the checked AST (plain-data subset): C-exact integer semantics, structs, enums, arrays, references, methods, lambdas; generation-time `str`/`Vec`/`Option`/`format!`; traps `KIFP100`, `fail!` `KIFP102`, unavailable calls `KIFP101`, limits `KIFP103` |
