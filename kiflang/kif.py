@@ -135,7 +135,7 @@ def cmd_ir(args: argparse.Namespace) -> int:
         print("kif ir: give a FILE (or --list-passes)", file=sys.stderr)
         return 2
     try:
-        names = passmgr.pipeline(args.passes) if args.passes else [] if args.hash else passmgr.pipeline("default") if args.explain_taint or args.taint_report else (["prove"] if args.prove else [])
+        names = passmgr.pipeline(args.passes) if args.passes else [] if args.hash else passmgr.pipeline("default") if args.explain_taint or args.taint_report or args.wipe_report else (["prove"] if args.prove else [])
         passmgr.order(names)
     except passmgr.PassError as e:
         print(f"kif ir: {e}", file=sys.stderr)
@@ -210,6 +210,10 @@ def cmd_ir(args: argparse.Namespace) -> int:
             from . import taint_ir
 
             out = taint_ir.report(built, args.file, mod.imported)
+        elif args.wipe_report:
+            from . import wipes
+
+            out = wipes.report(built, mod.tree, args.file)
         elif args.explain_taint:
             from . import taint_ir
 
@@ -515,6 +519,7 @@ def make_parser() -> "tuple":
     ir_.add_argument("--list-passes", action="store_true", help="list the IR passes and exit")
     ir_.add_argument("--explain-checks", action="store_true", help="list every run-time check of the file as proved (with the proof) or kept (docs/kif-ir-passes.md)")
     ir_.add_argument("--taint-report", action="store_true", help="the taint audit for a security review: sanitizers and their call sites, #[trusted] functions, every untaint! reason, every barrier and tainted source (docs/kif-taint.md)")
+    ir_.add_argument("--wipe-report", action="store_true", help="the secure-wipe audit for a security review: secure structs (wiped and exempt fields), #[secure_wipe] functions, every secure variable with its wipe sites (docs/kif-secure-wipe.md)")
     ir_.add_argument("--hash", action="store_true", help="one line per function: the sha256 of its raw IR, which ignores comments, names and positions (docs/kif-module-contracts.md, section 13)")
     ir_.add_argument("--attest", action="store_true", help="write a .kifa attestation (name -> IR hash, optionally signed) to -o FILE (docs/kif-module-contracts.md, section 13.2)")
     ir_.add_argument("--target", help="with --attest: the target recorded (a built-in name or .json file; default c)")

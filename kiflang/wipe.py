@@ -100,6 +100,8 @@ def check_struct(bc, it: ast.StructDecl) -> None:
         return
     secure = _attr(it.attrs, "secure_wipe") is not None
     check_args(bc, _attr(it.attrs, "secure_wipe"))
+    if secure and not sym.generics:
+        padding_note(bc, it)
     if secure:
         ty = Ty(it.name.text, key=f"{sym.module.key}:{it.name.text}", cat="adt", sym=sym)
         if bc.index.get(ty.key, {}).get("drop") is not None:
@@ -119,6 +121,52 @@ def check_struct(bc, it: ast.StructDecl) -> None:
             d.append(dg.error(ex.range, "KIFW004", f"#[wipe_exempt] on field {f.name.text!r}: {it.name.text!r} is not #[secure_wipe]"))
         elif not sym.generics and wipeable(bc, bc.ty(f.ty, sym.module)):
             d.append(dg.error(ex.range, "KIFW004", f"#[wipe_exempt] on field {f.name.text!r}: its type is wiped anyway, remove the tag"))
+
+
+_PRIM_BYTES = {"bool": 1, "char": 4, "i8": 1, "u8": 1, "i16": 2, "u16": 2, "i32": 4, "u32": 4, "i64": 8, "u64": 8, "isize": 8, "usize": 8, "i128": 16, "u128": 16}
+
+
+def _layout(bc, t, seen=()):
+    """(size, align) of a field type under the natural C layout of a 64-bit target, or None when kif cannot tell (a generic, an enum, a pointer-sized
+    type of an unknown target): only the types it can size are checked for padding."""
+    if isinstance(t, ast.ArrayType):
+        inner = _layout(bc, t.elem, seen)
+        if inner is None or not (isinstance(t.length, ast.Lit) and t.length.kind == "int"):
+            return None
+        return inner[0] * int(t.length.value), inner[1]
+    if isinstance(t, ast.PathType):
+        if t.text in _PRIM_BYTES:
+            n = _PRIM_BYTES[t.text]
+            return n, min(n, 8)
+        sym = bc.mod.scope_types.get(t.text)
+        if sym is not None and sym.kind == "struct" and not sym.generics and t.text not in seen:
+            return _struct_layout(bc, sym.node, seen + (t.text,))[:2] if _struct_layout(bc, sym.node, seen + (t.text,)) else None
+    return None
+
+
+def _struct_layout(bc, it, seen=()):
+    """(size, align, padding bytes) of a struct, or None when a field cannot be sized."""
+    off = pad = align = 0
+    for f in it.fields:
+        lay = _layout(bc, f.ty, seen)
+        if lay is None:
+            return None
+        size, al = lay
+        gap = -off % al
+        pad += gap
+        off += gap + size
+        align = max(align, al)
+    tail = -off % (align or 1)
+    return off + tail, align or 1, pad + tail
+
+
+def padding_note(bc, it: ast.StructDecl) -> None:
+    """KIFW101: a secure struct whose natural layout has padding bytes, which the field-by-field wipe does not touch (rule W5)."""
+    lay = _struct_layout(bc, it)
+    if lay is not None and lay[2]:
+        bc.d.append(dg.info(it.name.range, "KIFW101",
+                            f"secure struct {it.name.text!r} has {lay[2]} byte(s) of padding that the field-by-field wipe does not erase "
+                            "(reorder the fields or give it an explicit layout without padding)"))
 
 
 def check_item_attrs(bc, it) -> None:

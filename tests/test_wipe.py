@@ -224,3 +224,39 @@ def test_a_pass_that_moves_or_duplicates_a_wipe_is_rejected(scratch):
 
 def test_a_pass_that_changes_nothing_else_is_accepted(scratch):
     assert _guarded(scratch, lambda fn: None).diagnostics == []
+
+
+# ---- tools: notes and the report (stage 7)
+
+def test_padding_note_on_a_secure_struct():
+    d = analyze("#[secure_wipe] struct p { a: u8, b: u64 }").diagnostics
+    assert [(x.code, x.severity) for x in d] == [("KIFW101", 3)] and "7 byte" in d[0].message
+    assert codes("#[secure_wipe] struct t { a: u64, b: u32, c: u32 }") == []
+    assert codes("struct plain { a: u8, b: u64 }") == []
+
+
+def test_copy_into_an_unmarked_variable_is_noted():
+    from kiflang import ir, passes, symbols
+
+    def notes(src):
+        mod = ir.build_module(symbols.analyze("/t/main.kif", src, None).tree)
+        return [d.code for d in passes.run_function(mod.functions[0], ["wipes"]).diagnostics]
+
+    assert notes("fn f() -> u32 { #[secure_wipe] let k: u32 = 5; let c: u32 = k; c }") == ["KIFW102"]
+    assert notes("fn f() -> u32 { #[secure_wipe] let k: u32 = 5; #[secure_wipe] let c: u32 = k; c }") == []
+
+
+def test_wipe_report_lists_structs_variables_and_exemptions():
+    from kiflang import ir, symbols, wipes
+
+    src = ("#[secure_wipe] struct s { a: u32, #[wipe_exempt] p: ptr<u8> }\n"
+           "#[secure_wipe] fn f(x: u32) -> u32 { let a: u32 = x; #[wipe_exempt] let b: u32 = 1; a + b }")
+    m = symbols.analyze("/t/main.kif", src, None)
+    mod = ir.build_module(m.tree)
+    from kiflang import passes
+
+    for f in mod.functions:
+        passes.run_function(f, ["wipes"])
+    r = wipes.report(mod, m.tree, "t.kif")
+    assert "s: wiped a; exempt p" in r and "Functions marked #[secure_wipe]: 1" in r
+    assert "variable a (u32): 1 wipe(s)" in r and "f: b" in r and "total wipe sites: 1" in r

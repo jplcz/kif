@@ -61,6 +61,20 @@ def _wipe(loc: ir.Local, why: str, site=None) -> ir.Wipe:
     return ir.Wipe(loc, "", loc.ty, loc.wipe_volatile, f"{why} of {loc.name!r}", site=site)
 
 
+def copies(fn: ir.Function) -> List[Tuple[ir.Store, ir.Local]]:
+    """Direct copies of a secure variable into a named variable that is not secure (`let y = x`, `y = x`): the value now also lives in
+    storage nobody wipes (KIFW102). Only what the IR shows directly is found; a copy through a call or an unsafe write is not."""
+    out = []
+    for b in fn.blocks:
+        src: Dict[ir.Temp, ir.Local] = {}
+        for i in b.instrs:
+            if isinstance(i, ir.Load) and i.local.wipe and i.dst.type.kind != "ref":
+                src[i.dst] = i.local
+            elif isinstance(i, ir.Store) and isinstance(i.src, ir.Temp) and i.src in src and not i.local.wipe and i.local is not src[i.src]:
+                out.append((i, src[i.src]))
+    return out
+
+
 def analyze(fn: ir.Function, cfg: ir.CFG) -> int:
     """Insert the wipes of `fn`; returns how many."""
     secure = [l for l in fn.locals if l.wipe]
@@ -144,3 +158,44 @@ def analyze(fn: ir.Function, cfg: ir.CFG) -> int:
         for pos, w in sorted(items, key=lambda p: -p[0]):
             b.instrs.insert(pos, w)
     return count
+
+
+def report(mod: ir.Module, tree, file: str) -> str:
+    """The secure-wipe audit of a module as text, for a security review (`kif ir --wipe-report`): every secure struct with its wiped and
+    exempt fields, the `#[secure_wipe]` functions, every secure variable with its wipe sites, and the exempt variables. Run it on IR the
+    `wipes` pass has been over."""
+    from . import ast, astutil
+
+    def line(n) -> int:
+        return n.range.start.line + 1
+
+    def has(attrs, name: str) -> bool:
+        return any(a.name.text == name for a in attrs)
+
+    out = [f"Secure wipe report: {file}", ""]
+    structs = [n for n in astutil.walk(tree) if isinstance(n, ast.StructDecl) and has(n.attrs, "secure_wipe")]
+    out.append(f"Secure structs (#[secure_wipe]): {len(structs)}")
+    for st in structs:
+        wiped = [f.name.text for f in st.fields if not has(f.attrs, "wipe_exempt")]
+        exempt = [f.name.text for f in st.fields if has(f.attrs, "wipe_exempt")]
+        out.append(f"  {file}:{line(st)}: {st.name.text}: wiped {', '.join(wiped) or 'none'}; exempt {', '.join(exempt) or 'none'}")
+    fns = [f for f in mod.functions if f.node is not None and "secure_wipe" in f.attrs]
+    out += ["", f"Functions marked #[secure_wipe]: {len(fns)} (every plain local is a secure variable; by-value parameters are not)"]
+    out += [f"  {file}:{line(f.node)}: {f.name}" for f in fns]
+    out += ["", "Secure variables and their wipe sites:"]
+    total = 0
+    for f in mod.functions:
+        sites = [i for _, i in f.instrs() if isinstance(i, ir.Wipe)]
+        for loc in (l for l in f.locals if l.wipe):
+            mine = [w for w in sites if w.local is loc]
+            total += len(mine)
+            kind = "parameter" if loc.param else "variable"
+            vol = ", volatile" if loc.wipe_volatile else ""
+            out.append(f"  {f.name}: {kind} {loc.name} ({loc.ty}{vol}): {len(mine)} wipe(s)")
+            out += [f"    {file}:{line(w.site) if w.site is not None else '?'}: {w.why}" for w in mine]
+    out.append(f"  total wipe sites: {total}")
+    exempt_lets = [(f.name, s) for f in mod.functions if f.node is not None and "secure_wipe" in f.attrs
+                   for s in astutil.walk(f.node.body) if isinstance(s, ast.Let) and has(s.attrs, "wipe_exempt")]
+    out += ["", f"Exempt variables (#[wipe_exempt]): {len(exempt_lets)}"]
+    out += [f"  {file}:{line(s)}: {fn}: {s.name.text}" for fn, s in exempt_lets]
+    return "\n".join(out) + "\n"

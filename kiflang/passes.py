@@ -342,6 +342,11 @@ class WipesPass(Pass):
     def run(self, ctx: Context) -> int:
         from . import wipes
 
+        for st, src in wipes.copies(ctx.fn):
+            rng = getattr(st.site, "range", None)
+            if rng is not None:
+                ctx.diagnostics.append(dg.info(rng, "KIFW102", f"secure variable {src.name!r} is copied into {st.local.name!r}, which is not secure and is never wiped "
+                                                                "(mark it #[secure_wipe] or avoid the copy)"))
         return wipes.analyze(ctx.fn, ctx.get("cfg"))
 
 
