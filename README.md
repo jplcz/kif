@@ -17,6 +17,73 @@ build, the same binary and the same ABI. Nothing prevents a project from going f
 subsystems, or even large parts of a kernel, purely in kif; the interop is there so that this can happen gradually, not so
 that it has to.
 
+## Applications & High-Assurance Target Domains
+
+> **Note:** The `kif` language and its associated tooling (compiler, IR provers, language servers, and attestation tools) are currently a **Work in Progress (WiP)**. The features and capabilities described below represent the architectural design and active development roadmap; some components may still be in development or subject to change.
+
+`kif` is engineered specifically for safety-critical, high-assurance, and regulated environments where software failure carries catastrophic human, physical, or financial cost. By compiling strict high-level safety invariants down to fully auditable, deterministic C and C++ without relying on black-box optimization or an opaque runtime, `kif` serves as a verified implementation bridge for mission-critical systems.
+
+---
+
+### 1. High-Assurance Guarantees & Evaluation Readiness
+
+`kif` is designed from first principles to generate the formal, physical evidence demanded by statutory certification regimes:
+
+* **Evaluation Assurance Levels (Common Criteria / ISO 15408):**
+  * **EAL4+ Baseline:** Routine certification is accelerated by fully deterministic C lowering, complete source traceability via `#line` preservation, and human-readable optimizer audit trails (e.g., `/* kif: kept, other statements run... */`) directly in the generated output.
+  * **EAL5 (Semiformally Designed and Tested):** Supported by formal preconditions and postconditions (`#[requires]`, `#[ensures]`, and `#[preserves]`), strictly enforced typestate machines via move-only semantics, and cryptographic `.kifm` module interface manifests.
+  * **EAL6 (Semiformally Verified Design and Tested):** Backed by mid-level IR taint tracking, non-bypassable constant-time invariant guards (`ctguard`), and hardware-aware physical memory erasure (`#[secure_wipe]`) satisfying `FCS_CKM.4` (Cryptographic Key Destruction).
+* **FIPS 140-3 (ISO/IEC 19790) Zeroization Compliance:**
+  * Rather than relying on fragile compiler flags or functions subject to dead-store elimination (DCE), `kif` computes backward liveness dataflows to emit target-specific zeroization calls (`explicit_bzero`, TRNG fill, or SRAM scrubbing) immediately after a secret's last use (`rule W1`).
+  * Emits permanent audit trails via greppable `KIF_SECURE_WIPE` and `KIF_SECURE_WIPE_VOLATILE` macros along with exhaustive `--wipe-report` summaries.
+* **DO-178C / ED-12C (Avionics Software Safety):**
+  * Supports Level A/B compliance by eliminating undefined behavior in arithmetic (fully defined two's-complement wrapping modulo $2^N$), forbidding recursion in lowered code (`KIFP032`), and statically enforcing bounded stack usage budgets via `#[small_stack(N)]`.
+* **Spectre v1 & Microarchitectural Side-Channel Resistance:**
+  * Strict taint lattices reject tainted values reaching branch conditions, memory addresses, or division/shift denominators.
+  * Branch-free sanitization sequences (`ct::select`) are defended across all IR passes by `ctguard`, failing compilation (`KIFT012`) if any pass attempts to introduce conditional control flow into a constant-time region.
+
+---
+
+### 2. Standalone Attestation & Supply Chain Defense (`.kifa` / `.kifm`)
+
+`kif` eliminates binary trust assumptions in multi-vendor aerospace, defense, and industrial supply chains:
+
+* **Semantic IR Attestation (`.kifa`):**
+  * Computes deterministic SHA-256 hashes of the canonical raw IR (`kif ir --hash`) before transformations run. Comments, formatting, variable alpha-renaming, and file paths are excluded from the hash.
+  * Generates signed `.kifa` attestation manifests (`kif ir --attest`), allowing independent auditors to recompute and verify (`kif verify`) whether the deployed object code matches the reviewed, attested mathematical meaning without exposing proprietary vendor source code.
+* **Precompiled Protected Modules (`.kifm`):**
+  * Enables vendors to ship precompiled binary modules alongside cryptographic CBOR interface headers.
+  * Encapsulates the vendor's effective taint policy, compiler/prover identity hash, and check survival records (`kept_checks` vs. `proved`).
+  * Ed25519 digital signatures and offline revocation lists (`--revoked`) prevent untrusted, modified, or tampered vendor modules from being imported into secure builds.
+
+---
+
+### 3. Concrete Application Domains & Example Projects
+
+#### A. Cryptographic Subsystems, HSMs & Root-of-Trust Firmware
+
+* **Zero-Leakage Key Enclaves:** Hardware Security Module (HSM) microcode, smart-card runtimes (PCI PTS), and secure enclave partitions.
+* **Cryptographic Protocol Engines:** Constant-time AES, ChaCha20-Poly1305, or post-quantum key encapsulation implementations where secret scalar multipliers and branch conditions must never leak via timing side channels or memory remanence.
+* **Secure Key Exchangers:** State machines where ephemeral secrets, diffie-hellman shared secrets, or seed buffers are wiped from stack storage immediately after derivation via `#[secure_wipe]` and `secure_vector<T>`.
+
+#### B. Aerospace, Avionics & Autonomous Defense Platforms
+
+* **DO-178C Flight Control Computers:** Actuator control loops, fly-by-wire thrust controllers, and sensor polling loops requiring statically bounded stack depths (`#[small_stack(N)]`) and proof-driven bounds-check elision (`#[require_proved]`).
+* **Cross-Domain Separation Kernels (MILS):** Data diodes and partition controllers enforcing mathematical taint separation between classified (tainted/untrusted) and unclassified network interfaces.
+* **Telemetry & Mission Computer Gateways:** Strict zero-copy, bounds-checked packet parsers that ingest unaligned, volatile bus data (MIL-STD-1553, ARINC 429, SpaceWire) without dynamic memory allocation or panic paths.
+
+#### C. Operating System Kernels & Bare-Metal Drivers
+
+* **FreeBSD Device Drivers & Kernel Modules:** Native integration with FreeBSD’s `kobj` and `newbus` architectures via `#[kobj]`, generating makeobjops-compatible headers (`<stem>_if.h`), dispatch tables, and driver softc lifecycle wrappers.
+* **Storage & Network Protocol Stacks:** Memory-mapped I/O (MMIO) device drivers (NVMe, 100GbE NICs) using volatile primitives and explicit typestate transitions to eliminate resource leaks, double-frees, or use-after-move race conditions.
+* **Microkernel Core Servers:** IPC marshalling layers, syscall dispatch tables, and per-CPU/thread-local memory cell providers (`#[per_cpu]`, `#[tls]`) that execute safely across non-preemptible interrupt boundaries.
+
+#### D. Industrial, Medical & Automotive Control (IEC 61508 / ISO 26262)
+
+* **Drive-By-Wire & ADAS ECU Firmware:** Real-time braking, steering, and motor inverter controllers where unbounded loops, heap allocations, and runtime panics are strictly banned.
+* **Infusion Pumps & Life Support Systems:** Medical automation microcontrollers that process sensor inputs with static contract guarantees (`requires`/`ensures`), ensuring invalid dosing inputs trigger immediate compile-time errors rather than runtime fault conditions.
+* **Railway Interlocking Logic:** Fail-safe track switching controllers where every logical branch and invariant proof is preserved in human-readable C comments for safety case assessors.
+
 ## Why kif exists
 
 kif is the answer to five problems with writing kernel and embedded code today.
@@ -99,24 +166,22 @@ and C++ is far too easy to write: a dangling view, an uninitialised local, an ou
 resource all compile without a complaint. reloco makes the safe form the default one and the unsafe form an explicit,
 reviewable decision, and kif keeps those guarantees at the language level:
 
-- **Failure is explicit, not undefined behaviour.** Fallible operations return `reloco::result<T>`; there are no exceptions and
+* **Failure is explicit, not undefined behaviour.** Fallible operations return `reloco::result<T>`; there are no exceptions and
   no RTTI, and nothing relies on debug-only asserts or on a trap that only fires in some build modes.
-- **Type-erased allocators, no rebinding.** Containers take a two-word `allocator_ref` handle instead of an allocator template
+* **Type-erased allocators, no rebinding.** Containers take a two-word `allocator_ref` handle instead of an allocator template
   parameter, so `vector<T>` has the same type whether it lives on the heap, in a pool (`uma_zone`-style), on a stack or in a
   bump arena. There is no `std::allocator_traits::rebind` machinery: an allocator is never re-instantiated per node or element
   type, one backend serves every container, and allocator choice is a runtime value that never leaks into APIs, ABIs or
   `.kifm` signatures. Every allocator operation returns `result<T>`, so exhaustion is handled, never thrown.
-- **Hardened containers and views.** Checked element access, bounds-aware spans and string views, fixed-capacity and
+* **Hardened containers and views.** Checked element access, bounds-aware spans and string views, fixed-capacity and
   allocator-backed containers with fallible construction (`try_` protocol), so kernel code has no unchecked access.
-- **Lifetime safety.** Borrowed values and pointers carry lifetime annotations, consumed-value tracking and rvalue protection
+* **Lifetime safety.** Borrowed values and pointers carry lifetime annotations, consumed-value tracking and rvalue protection
   for accessors that alias their owner; the generated C++ keeps these annotations so clang reports dangling borrows.
-- **Move-by-default and infallible move.** Types are moved, not silently copied; copying a resource is deliberate (`clone`).
-- **Send/sync, locking and atomic-context discipline.** Thread-transfer and sharing safety follow Rust's `Send`/`Sync`;
+* **Move-by-default and infallible move.** Types are moved, not silently copied; copying a resource is deliberate (`clone`).
+* **Send/sync, locking and atomic-context discipline.** Thread-transfer and sharing safety follow Rust's `Send`/`Sync`;
   lock annotations and atomic-context checks catch sleeping in atomic sections.
-- **A safety checker for the surrounding C++.** `reloco-tidy` enforces the same rules in hand-written C++ (no raw pointers or C
+* **A safety checker for the surrounding C++.** `reloco-tidy` enforces the same rules in hand-written C++ (no raw pointers or C
   arrays, `noexcept`, initialised locals, a Rust-style borrow check), with opt-in regions and explicit exemptions.
-
-
 
 ## Status
 
@@ -167,10 +232,10 @@ New here? Start with [`docs/introduction.md`](docs/introduction.md). The procedu
 
 ## Dependencies
 
-- Python 3 (standard library only) for the compiler, language server and tests.
-- [reloco](https://github.com/jplcz/reloco) for the C++/C runtimes. CMake fetches it from GitHub; use
+* Python 3 (standard library only) for the compiler, language server and tests.
+* [reloco](https://github.com/jplcz/reloco) for the C++/C runtimes. CMake fetches it from GitHub; use
   `-DJPLCZ_KIF_RELOCO_SOURCE_DIR=<path>` (or the environment variable of the same name) for a local checkout.
-- [microfmt](https://github.com/jplcz/microfmt), used by the optional call tracing (`kif/kobj/trace.hpp`, enabled only
+* [microfmt](https://github.com/jplcz/microfmt), used by the optional call tracing (`kif/kobj/trace.hpp`, enabled only
   with `-DKIF_KOBJ_TRACE`, C++20). Same fetch rules: `-DJPLCZ_KIF_MICROFMT_SOURCE_DIR=<path>`.
   microfmt is not needed.
 
