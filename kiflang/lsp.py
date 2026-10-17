@@ -43,6 +43,7 @@ from .symbols import Module, SCALARS, Symbol, analyze
 
 # LSP SymbolKind values.
 SK_NAMESPACE, SK_CLASS, SK_METHOD, SK_ENUM, SK_INTERFACE, SK_FUNCTION, SK_VARIABLE, SK_CONSTANT = 3, 5, 6, 10, 11, 12, 13, 14
+SEM_MODS = ["tainted"]
 SEM_TYPES = ["namespace", "type", "enum", "interface", "struct", "function", "variable"]
 SEM_KIND = {"struct": 4, "enum": 2, "interface": 3, "fn": 5, "const": 6}
 SK_FIELD, SK_ENUM_MEMBER, SK_STRUCT, SK_TYPE_PARAMETER = 8, 22, 23, 26
@@ -269,7 +270,7 @@ class Server:
                 "foldingRangeProvider": True,
                 "documentHighlightProvider": True,
                 "inlayHintProvider": True,
-                "semanticTokensProvider": {"legend": {"tokenTypes": SEM_TYPES, "tokenModifiers": []}, "full": True},
+                "semanticTokensProvider": {"legend": {"tokenTypes": SEM_TYPES, "tokenModifiers": SEM_MODS}, "full": True},
                 "documentFormattingProvider": True,
                 "codeActionProvider": {"codeActionKinds": ["quickfix", "source.fixAll.kif"]},
             },
@@ -516,16 +517,19 @@ class Server:
         mod = self.module(uri)
         toks, _ = lx.lex(self.docs[uri])
         data, last = [], (0, 0)
+        hot = {(r.start.line, r.start.col) for r in taint.tainted_ranges(mod)}
         for t in toks:
             if t.kind != lx.IDENT or t.range.start.line != t.range.end.line:
                 continue
             found = path_at(toks, t.range.start)
             sym = lookup(mod, found[0]) if found else None
             idx = SEM_KIND.get(sym.kind) if sym is not None else None
-            if idx is None:
+            tainted = (t.range.start.line, t.range.start.col) in hot
+            if idx is None and not tainted:
                 continue
             line, col = t.range.start.line, t.range.start.col
-            data += [line - last[0], col - (last[1] if line == last[0] else 0), t.range.end.col - col, idx, 0]
+            data += [line - last[0], col - (last[1] if line == last[0] else 0), t.range.end.col - col,
+                     SEM_TYPES.index("variable") if idx is None else idx, 1 if tainted else 0]
             last = (line, col)
         return {"data": data}
 

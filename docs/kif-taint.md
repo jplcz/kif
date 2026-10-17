@@ -412,7 +412,19 @@ docs/kif-ir-passes.md): deterministic, cacheable, parallel.
 ### 6.5 Editor and tools
 
 - Diagnostics flow through `check_module` and the LSP like `KIFI0xx`.
-- Hover over a value shows `tainted (from parameter 'n')`.
+- Hover over a local or parameter says whether it is tainted where it was bound, and where the taint came from (`tainted (parameter 'n', line 1)`).
+- **Tainted variables are highlighted.** The language server sends every declaration and every read of a tainted local or parameter as a
+  `variable` semantic token with the `tainted` modifier, so the whole trail from the security boundary to its uses is visible. The
+  highlight is per use, because taint is flow-sensitive: a variable made clean by a whole-value store is not marked after it.
+  The VS Code extension colours it orange, bold and underlined by default; override it in `settings.json`:
+
+  ```jsonc
+  "editor.semanticTokenColorCustomizations": {
+    "rules": { "*.tainted": { "foreground": "#ff8c00", "fontStyle": "bold underline" } }   // any theme colour; drop fontStyle for colour only
+  }
+  ```
+
+  Other editors: map the `tainted` token modifier of the `variable` type (`@lsp.mod.tainted` in Neovim).
 - `kif ir FILE --taint-report` is the audit for a security review, one text page per file: the sanitizers (`#[untaint]`, trusted ones
   marked) with their call-site counts, the `#[trusted]` exports, every `untaint!` site with its reason, every speculation barrier
   (explicit and implicit, with counts) and every tainted source. It runs the default pipeline, so the implicit barriers are in it.

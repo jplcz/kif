@@ -186,6 +186,7 @@ class _Walk:
         self.scopes: List[Dict[str, _V]] = [{}]
         self.seen: set = set()
         self.wrapped: set = set()   # the calls that sit directly inside an `untaint!`
+        f.taint_uses = []           # ranges of the uses that read tainted data, read by the LSP semantic tokens
         f.taint_locals = []         # (name, declaration range, taint at the declaration), read by the LSP hover
 
     # -- diagnostics
@@ -381,6 +382,8 @@ class _Walk:
         if len(e.segments) == 1:
             hit = self.find(e.segments[0].name)
             if hit is not None:
+                if hit[1].taint is not None:
+                    self.f.taint_uses.append(e.range)
                 return hit[1].taint
         return None
 
@@ -847,6 +850,16 @@ def describe_local(mod, pos, name: str) -> Optional[str]:
         return (f"**Taint:** `{name}` is tainted ({t.what}, line {t.line}); it may not decide a branch, an index, a divisor or a shift count "
                 "until an `#[untaint]` function cleans it. A later clean whole-value store makes it clean again.")
     return None
+
+
+def tainted_ranges(mod) -> list:
+    """Every place in a module where a tainted local or parameter is declared or read (for the editor's `tainted` highlight)."""
+    from .modsec import _decls
+    out = []
+    for _key, f, _emb in (_decls(mod.tree) if mod.tree is not None else ()):
+        out += [r for _n, r, t in getattr(f, "taint_locals", []) if t is not None]
+        out += getattr(f, "taint_uses", [])
+    return out
 
 
 def check_body(bc, f) -> None:

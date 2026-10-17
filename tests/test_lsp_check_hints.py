@@ -196,3 +196,18 @@ def test_hover_on_a_local_says_whether_it_is_tainted():
     assert "`m` is clean" in hover(0, "m:")
     assert "`a` is tainted" in hover(1, "a =")
     assert "`b` is clean" in hover(3, "b")
+
+
+def test_tainted_locals_get_the_tainted_semantic_token_modifier():
+    src = "fn f(#[tainted] n: usize, m: usize) -> usize {\n    let a = n + 1;\n    let b = m;\n    b\n}\n"
+    r = Rig("off")
+    r.open(src)
+    out = r.s.handle({"id": 9, "method": "textDocument/semanticTokens/full", "params": {"textDocument": {"uri": r.uri}}})
+    data, line, col, marked = out[0]["result"]["data"], 0, 0, set()
+    for i in range(0, len(data), 5):
+        dl, dc, _n, _t, mods = data[i:i + 5]
+        line, col = line + dl, (col + dc if dl == 0 else dc)
+        if mods & 1:
+            marked.add((line, col))
+    # the parameter `n`, and its use in `n + 1`, and the declaration of `a`; not `m` or `b`
+    assert marked == {(0, 16), (1, 12), (1, 8)}, marked
