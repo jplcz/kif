@@ -920,10 +920,60 @@ class _Emit:
             return "struct"  # not a scalar: no literal takes its type from here
         return None
 
+    def ct_call(self, c: ir.Call) -> None:
+        """A `ct::` intrinsic as branch-free integer arithmetic on the unsigned type of the same width, then the target's value
+        barrier on the result so the C compiler cannot turn the mask back into a branch (docs/kif-taint.md section 7)."""
+        from .lower_c import LowerError
+
+        lw = self.lw
+        barrier = lw.t.taint("barrier", v=f"kif_t{c.dst.id}")
+        if barrier is None:
+            raise LowerError(f"target {lw.t.name!r} has no taint.barrier, but {c.callee} needs one: add it to the target's `taint` section")
+        name = c.callee[4:]
+        line = c.site.range.start.line + 1 if c.site is not None else 0
+        ops = c.args[1:] if name == "select" else c.args
+        n = "usize"
+        if name != "mask":
+            n = next((self.tname(o) for o in ops if getattr(o, "ty", None) in self.lw_bits()), c.dst.ty if c.dst.ty in self.lw_bits() else "i32")
+        w = self.lw_bits()[n]
+        u = lw.scalar({8: "u8", 16: "u16", 32: "u32", 64: "u64"}[w])
+        bias = f" ^ (({u})1 << {w - 1})" if n.startswith("i") else ""   # signed order becomes unsigned order
+
+        def un(v: ir.Value) -> str:
+            return f"(({u})({self.val(v, n)}))"
+
+        def lt(a: str, b: str) -> str:   # the borrow bit of a - b, in the top bit
+            a, b = f"({a}{bias})", f"({b}{bias})"
+            return f"(({u})(({a} ^ (({a} ^ {b}) | ((({u})({a} - {b})) ^ {b}))) >> {w - 1}))"
+
+        t = f"kif_t{c.dst.id}"
+        cond = f"(({u})({self.val(c.args[0])} != 0))" if name in ("mask", "select") else ""
+        if name == "mask":
+            expr = f"(({u})0 - {cond})"
+        elif name == "select":
+            m = f"(({u})0 - {cond})"
+            expr = f"(({un(c.args[1])} & {m}) | ({un(c.args[2])} & ~{m}))"
+        elif name == "eq":
+            d = f"({un(c.args[0])} ^ {un(c.args[1])})"
+            expr = f"(1 ^ ((({u})({d} | ({u})(({u})0 - {d}))) >> {w - 1}))"   # narrow types promote to int: cut back before the shift
+        elif name == "lt":
+            expr = lt(un(c.args[0]), un(c.args[1]))
+        elif name == "clamp":
+            expr = f"({un(c.args[0])} & (({u})0 - {lt(un(c.args[0]), un(c.args[1]))}))"
+        else:
+            raise _Bail(f"intrinsic {c.callee}")
+        ty = lw.scalar(c.dst.ty) if c.dst.ty in self.lw_bits() else lw.scalar("bool")
+        self.put(f"/* kif: ct intrinsic {c.callee}(): branch-free, value barrier after it ({lw.file}:{line}) */")
+        self.put(f"{t} = ({ty}){expr};")
+        self.put(f"{barrier};")
+
     def call(self, c: ir.Call) -> None:
         from . import ast
 
         lw = self.lw
+        if c.kind == "intrinsic":
+            self.ct_call(c)
+            return
         if c.kind == "macro":
             if c.callee not in ("panic!", "unreachable!"):
                 raise _Bail(f"macro {c.callee}")

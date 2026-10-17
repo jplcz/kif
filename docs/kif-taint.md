@@ -569,8 +569,11 @@ path is a place a reviewer sees, and the set is small.
    `Local.taint` (a `#[tainted]` parameter) and `Call.taint` (`untaint` / `tainted_result`) are new IR fields, serialized, `IR_VERSION` is 2.
    It reports KIFT001, 002 and 008 with the walker's message format; a test checks it agrees with the walker on the sink corpus.
    Limits: KIFT003-005 need declared types and stay walker-only; `--explain-taint` is not done yet; `check_module` runs only when the walker found no error, so the pass is a pure backstop and never repeats a walker diagnostic.
-5. **Codegen.** `taint.barrier` and friends in the target schema, barrier emission, a compiled `tests/c` case that keeps a `select`
-   branch-free (inspect the generated code in the test, not only its output).
+5. **Codegen.** Done for the `ct::` intrinsics: the `taint` target section (`barrier`, `nospec`, `fence`, validated placeholders; `c` sets `barrier`),
+   branch-free C for `select`/`eq`/`lt`/`mask`/`clamp` on the unsigned type of the same width (signed order by flipping the top bit), the
+   barrier after each result, an audit comment before it, and a `LowerError` naming `taint.barrier` when the target has none. Tests compile
+   with gcc and compare with the interpreter, exhaustively on 8 bits, and check the comment and barrier in the text. `nospec` and `fence`
+   are schema-only until stage 6 uses them.
 6. **Barriers.** `spec::barrier` / `spec::value` in the language, `Barrier` in the IR (with `IR_VERSION` bump), implicit barriers for
    `?` and tainted loads, reloco primitive and plain-C lowering, a target error when no lowering exists.
 7. **Reasons.** `untaint!("reason", f(..))`, `KIFT010`, `Call.reason` in the IR and the audit comment in the C output (done with stage 1).

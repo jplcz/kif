@@ -116,6 +116,10 @@ a loop in `extends` is an error. Check with `kif target check`; show the result 
 | `errno.style` | `none`, `positive`, `negative` | Default style; an interface's `errno(..)` wins. FreeBSD returns `+errno`, Linux `-errno`. |
 | `errno.header` | string | Where the errno numbers come from. |
 | `errno.map` | map | reloco `error` name -> errno macro or number, overriding the built-in table (`allocation_failed` -> `ENOMEM`, `out_of_range` -> `ERANGE`, `not_found` -> `ENOENT`, ...; the table is `ERROR_ERRNO` in `kiflang/target.py`). Unlisted errors keep the default; an unknown error name is rejected. Example: `{"timed_out": "EWOULDBLOCK"}`. Errors that share an errno still cannot be told apart in a `match` (refused). |
+| `taint` | object | Speculation barriers for the taint feature (docs/kif-taint.md section 7). Absent: code that needs one is refused at lowering with an error naming the key; nothing is silently a no-op. The built-in `c` target sets `barrier` for GCC/Clang. |
+| `taint.barrier` | text | C statement hiding the variable `{v}` from the optimizer and from speculation; emitted after every `ct::` intrinsic result, e.g. `__asm__ volatile ("" : "+r"({v}))`. FreeBSD kernel: the same asm form. |
+| `taint.nospec` | text | C expression clamping `{i}` below `{n}` even under speculation (the `array_index_nospec` idiom). Used by stage 6. |
+| `taint.fence` | text | C statement stopping later instructions running speculatively, e.g. `__asm__ volatile ("lfence")`. Used by stage 6. |
 | `alloc` | object or `null` | The allocator of a **C** target; C++ targets use reloco and must not set it (nor `panic`, `assert`, `errno`, `cells`). `null`/absent: nothing that allocates can be synthesized for this target. |
 | `alloc.malloc` | text | C expression, `{size}` bytes, NULL on failure: `kmalloc({size}, GFP_KERNEL)`. |
 | `alloc.zalloc` | text | Zeroed variant (optional; else malloc + memset). |

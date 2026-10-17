@@ -1181,3 +1181,49 @@ def test_comment_corpus_case_lowers_its_comments():
     assert "\t/* a run of comment lines */\n\t/* stays together, in order */\n" in c
     assert c.count("comments inside loops are written once") == 1
     assert "\t\t/* the larger one */\n\t\treturn a;" in c and "detached" not in c.lower()
+
+
+# -- taint stage 5: `ct::` intrinsics are branch-free C wrapped in the target's value barrier
+
+CT_SRC = """
+fn sel(c: bool, a: u32, b: u32) -> u32 { ct::select(c, a, b) }
+fn seli(c: bool, a: i16, b: i16) -> i16 { ct::select(c, a, b) }
+fn eq8(a: u8, b: u8) -> bool { ct::eq(a, b) }
+fn lti(a: i32, b: i32) -> bool { ct::lt(a, b) }
+fn ltu(a: u64, b: u64) -> bool { ct::lt(a, b) }
+fn msk(c: bool) -> usize { ct::mask(c) }
+fn clampi(x: i32, n: i32) -> i32 { untaint!("bounded by the caller's n", ct::clamp(x, n)) }
+"""
+
+
+def test_ct_intrinsics_match_the_interpreter_in_c():
+    m, r = compile_run(CT_SRC, 'printf("%u %u %d %d %d %d %d %d %d %d %d %llu %llu %d %d %d\\n",'
+                       't_sel(1,7,9),t_sel(0,7,9),t_seli(1,-3,4),t_seli(0,-3,4),t_eq8(5,5),t_eq8(5,6),t_lti(-1,0),t_lti(0,-1),t_lti(-2147483647-1,2147483647),'
+                       't_ltu(1,2),t_ltu(2,1),(unsigned long long)t_msk(1),(unsigned long long)t_msk(0),t_clampi(3,5),t_clampi(5,5),t_clampi(-3,5));')
+    assert r.stdout.split() == ["7", "9", "-3", "4", "1", "0", "1", "0", "1", "1", "0", "18446744073709551615", "0", "3", "0", "-3"]
+
+
+def test_ct_audit_comment_and_barrier_are_in_the_output():
+    t = target.load("c")
+    files = lower_c.lower(analyze("t.kif", CT_SRC, cfg_env=t.cfg_env()), t, "t")
+    text = files["t_proc.c"]
+    assert "kif: ct intrinsic ct::select()" in text and '__asm__ volatile ("" : "+r"(kif_t' in text
+
+
+def test_ct_without_a_target_barrier_is_an_error():
+    import pytest
+
+    t = target.load("c")
+    t.data["taint"] = {}
+    with pytest.raises(lower_c.LowerError, match="taint.barrier"):
+        lower_c.lower(analyze("t.kif", CT_SRC, cfg_env=t.cfg_env()), t, "t")
+
+
+def test_ct_eq_lt_clamp_are_exhaustively_right_on_8_bits():
+    src = ("fn e(a: u8, b: u8) -> bool { ct::eq(a, b) }\nfn l(a: u8, b: u8) -> bool { ct::lt(a, b) }\nfn li(a: i8, b: i8) -> bool { ct::lt(a, b) }\n"
+           "fn c(a: u8, b: u8) -> u8 { untaint!(\"test\", ct::clamp(a, b)) }\n")
+    drv = ("int bad=0; for(int a=0;a<256;a++)for(int b=0;b<256;b++){"
+           "bad+=t_e(a,b)!=(a==b); bad+=t_l(a,b)!=(a<b); bad+=t_li((int8_t)a,(int8_t)b)!=((int8_t)a<(int8_t)b); bad+=t_c(a,b)!=(a<b?a:0);}"
+           'printf("%d\\n",bad);')
+    m, r = compile_run(src, drv)
+    assert r.stdout.split() == ["0"]

@@ -51,6 +51,7 @@ ERROR_ERRNO = {
     "io_error": "EIO", "operation_canceled": "ECANCELED", "security_violation": "EPERM", "page_fault": "EFAULT",
 }
 PLACEHOLDERS = {"panic": ("file", "line", "msg"), "assert": ("cond", "file", "line", "msg")}
+TAINT_PLACEHOLDERS = {"barrier": ("v",), "nospec": ("i", "n"), "fence": ()}
 
 
 class TargetError(Exception):
@@ -171,6 +172,11 @@ _SPEC: Dict[str, Any] = {
         "map": (lambda v: _str_map(v) and all(k in ERROR_ERRNO for k in v) and all(re.fullmatch(r"[A-Za-z_]\w*|\d+", x) for x in v.values()),
                 "a map from a reloco `error` name to an errno macro or number, e.g. {\"timed_out\": \"EWOULDBLOCK\"}; unlisted errors use the defaults"),
     },
+    "taint": {  # speculation barriers (docs/kif-taint.md section 7); a target that lacks one refuses code that needs it
+        "barrier": (_is_str, "C statement hiding the variable {v} from the optimizer and from speculation, e.g. `__asm__ volatile (\"\" : \"+r\"({v}))`"),
+        "nospec": (_is_str, "C expression clamping index {i} below {n} even under speculation (the array_index_nospec idiom)"),
+        "fence": (_is_str, "C statement that stops later instructions running speculatively, e.g. `__asm__ volatile (\"lfence\")`"),
+    },
     "alloc": {  # the whole section may be null: no allocator, nothing that allocates can be synthesized
         "malloc": (_is_str, "C expression allocating {size} bytes, NULL on failure, e.g. `kmalloc({size}, GFP_KERNEL)`"),
         "zalloc": (_is_str, "like malloc but zeroed; optional (kif then uses malloc + memset)"),
@@ -286,6 +292,11 @@ def validate(data: Any, where: str = "") -> List[str]:
                     for ph in re.findall(r"\{(\w*)\}", alloc[k]):
                         if ph not in names:
                             out.append(f"alloc.{k}: unknown placeholder {{{ph}}} (allowed: {', '.join(names)})")
+        for k, names in TAINT_PLACEHOLDERS.items():
+            text = (data.get("taint") or {}).get(k)
+            for ph in re.findall(r"\{(\w*)\}", text) if isinstance(text, str) else ():
+                if ph not in names:
+                    out.append(f"taint.{k}: unknown placeholder {{{ph}}} (allowed: {', '.join(names) or 'none'})")
         for sect, names in PLACEHOLDERS.items():
             macro = (data.get(sect) or {}).get("macro")
             if isinstance(macro, str):
@@ -409,6 +420,11 @@ class Target:
     def macro(self, which: str, **args: str) -> Optional[str]:
         """`panic` or `assert` replacement text with its placeholders filled; None when the target does not define one."""
         text = self.get(f"{which}.macro")
+        return None if text is None else re.sub(r"\{(\w+)\}", lambda m: args.get(m.group(1), m.group(0)), text)
+
+    def taint(self, which: str, **args: str) -> Optional[str]:
+        """`taint.barrier`, `nospec` or `fence` with its placeholders filled; None when the target has none."""
+        text = self.get(f"taint.{which}")
         return None if text is None else re.sub(r"\{(\w+)\}", lambda m: args.get(m.group(1), m.group(0)), text)
 
     def alloc(self, which: str, **args: str) -> Optional[str]:

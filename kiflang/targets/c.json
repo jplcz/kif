@@ -9,6 +9,7 @@
   "includes": { "header": ["<stdint.h>", "<stdbool.h>", "<stddef.h>"] },
   "panic": { "macro": "__builtin_trap()", "noreturn": true },
   "assert": { "macro": "(({cond}) ? (void)0 : __builtin_trap())" },
+  "taint": { "barrier": "__asm__ volatile (\"\" : \"+r\"({v}))" },
   "errno": { "style": "negative", "header": "<errno.h>" },
   "alloc": { "malloc": "malloc({size})", "zalloc": "calloc(1, {size})", "realloc": "realloc({ptr}, {size})", "free": "free({ptr})", "aligned": "aligned_alloc({align}, {size})", "header": "<stdlib.h>" },
   "annotations": {},
