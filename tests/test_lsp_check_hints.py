@@ -211,3 +211,21 @@ def test_tainted_locals_get_the_tainted_semantic_token_modifier():
             marked.add((line, col))
     # the parameter `n`, and its use in `n + 1`, and the declaration of `a`; not `m` or `b`
     assert marked == {(0, 16), (1, 12), (1, 8)}, marked
+
+
+def test_flow_trail_connects_a_tainted_variable_with_everything_it_came_from_and_fed():
+    src = ("fn f(#[tainted] n: usize, m: usize) -> usize {\n    let a = n + 1;\n    let c = m;\n    let b = a * 2;\n    let d = c + m;\n    b\n}\n")
+    r = Rig("off")
+    r.open(src)
+
+    def at(method, line, text):
+        col = src.split("\n")[line].index(text)
+        out = r.s.handle({"id": 9, "method": method, "params": {"textDocument": {"uri": r.uri}, "position": {"line": line, "character": col}}})
+        return out[0]["result"]
+
+    hl = at("textDocument/documentHighlight", 1, "a =")
+    assert {(h["range"]["start"]["line"], h["range"]["start"]["character"]) for h in hl} == {(0, 16), (1, 12), (1, 8), (3, 8), (3, 12), (5, 4)}
+    assert at("textDocument/documentHighlight", 3, "b =") == hl or {h["range"]["start"]["line"] for h in at("textDocument/documentHighlight", 3, "b =")} == {0, 1, 3, 5}
+    value = at("textDocument/hover", 1, "a =")["contents"]["value"]
+    assert "`n` → `a` → `b`" in value, value
+    assert "`c`" not in value and "`d`" not in value

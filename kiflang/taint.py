@@ -123,6 +123,7 @@ class _V(NamedTuple):
     taint: Taint
     ref: bool   # a reference: the taint is the referent's, so dereferencing it is not an address use
     clean_place: bool = False   # a `&mut` parameter whose referent is declared clean: tainted data may not be written through it
+    decl: Optional[tuple] = None   # (line, col) of where the variable was declared, for the editor's flow trail
 
 
 def _join(a: Taint, b: Taint) -> Taint:
@@ -185,14 +186,18 @@ class _Walk:
         f.taint_sinks = self.sinks
         self.scopes: List[Dict[str, _V]] = [{}]
         self.seen: set = set()
+        self.mark = 0
         self.wrapped: set = set()   # the calls that sit directly inside an `untaint!`
-        f.taint_uses = []           # ranges of the uses that read tainted data, read by the LSP semantic tokens
+        f.taint_uses = []           # (use range, declaration key) of each read of tainted data, read by the LSP semantic tokens
+        f.taint_hits = []           # (range, code) of every KIFT diagnostic raised on tainted data, for the trail
+        f.taint_flow = {}           # declaration key -> the declaration keys whose tainted values flowed into it
         f.taint_locals = []         # (name, declaration range, taint at the declaration), read by the LSP hover
 
     # -- diagnostics
 
     def err(self, code: str, rng, origin: Origin, use: str) -> None:
         key = (code, rng.start.line, rng.start.col)
+        self.f.taint_hits.append((rng, code))
         if key in self.seen:
             return
         self.seen.add(key)
@@ -262,16 +267,25 @@ class _Walk:
         return None
 
     def declare(self, name: str, t: Taint, ref: bool = False, clean_place: bool = False, rng=None) -> None:
-        self.scopes[-1][name] = _V(t, ref, clean_place)
+        key = (rng.start.line, rng.start.col) if rng is not None else None
+        self.scopes[-1][name] = _V(t, ref, clean_place, key)
         if rng is not None:
             self.f.taint_locals.append((name, rng, t))
+            if t is not None:
+                self.flow(key, self.mark)
+
+    def flow(self, key, mark: int) -> None:
+        """Record that the tainted reads made since `mark` flowed into the declaration `key`."""
+        src = {d for _r, d in self.f.taint_uses[mark:] if d is not None and d != key}
+        if key is not None and src:
+            self.f.taint_flow.setdefault(key, set()).update(src)
 
     def update(self, name: str, t: Taint, strong: bool) -> None:
         hit = self.find(name)
         if hit is None:
             return
         i, v = hit
-        self.scopes[i][name] = _V(t if strong else _join(v.taint, t), v.ref, v.clean_place)
+        self.scopes[i][name] = _V(t if strong else _join(v.taint, t), v.ref, v.clean_place, v.decl)
 
     def snap(self) -> list:
         return [dict(s) for s in self.scopes]
@@ -330,9 +344,11 @@ class _Walk:
 
     def stmt(self, s) -> None:
         if isinstance(s, ast.Let):
+            self.mark = len(self.f.taint_uses)
             t = self.expr(s.init) if s.init is not None else None
             self.declare(s.name.text, t, isinstance(s.ty, ast.RefType) or _is_borrow(s.init), rng=s.name.range)
         elif isinstance(s, ast.LetPat):
+            self.mark = len(self.f.taint_uses)
             t = self.expr(s.init) if s.init is not None else None
             self.bind(s.pattern, t)
         elif isinstance(s, ast.ExprStmt):
@@ -383,7 +399,7 @@ class _Walk:
             hit = self.find(e.segments[0].name)
             if hit is not None:
                 if hit[1].taint is not None:
-                    self.f.taint_uses.append(e.range)
+                    self.f.taint_uses.append((e.range, hit[1].decl))
                 return hit[1].taint
         return None
 
@@ -416,9 +432,13 @@ class _Walk:
     # -- stores (rule 3)
 
     def e_Assign(self, e: ast.Assign) -> Taint:
+        self.mark = len(self.f.taint_uses)
         v = self.arg(e.value)
         root, declared = self.target(e.target, v, e.value.range)
         if root is not None and not declared:
+            hit = self.find(root)
+            if hit is not None and v is not None:
+                self.flow(hit[1].decl, self.mark)
             self.update(root, v, isinstance(e.target, ast.PathExpr) and e.op == "=")
         return None
 
@@ -852,13 +872,50 @@ def describe_local(mod, pos, name: str) -> Optional[str]:
     return None
 
 
+def trail(mod, pos) -> Optional[tuple]:
+    """The flow trail of the tainted local or parameter at `pos`: `(ranges, names, sinks)`, every declaration and read of the variable and of the
+    tainted variables it was computed from and the ones computed from it, the names of the variables on the trail in flow order, and the
+    `(range, code)` of the KIFT diagnostics where trail variables are used unsafely (the sinks)."""
+    from .modsec import _decls
+    for _key, f, _emb in (_decls(mod.tree) if mod.tree is not None else ()):
+        if getattr(f, "body", None) is None or not f.range.contains(pos):
+            continue
+        decls = {(r.start.line, r.start.col): (n, r) for n, r, t in getattr(f, "taint_locals", []) if t is not None}
+        key = next((k for k, (_n, r) in decls.items() if r.contains(pos)), None)
+        if key is None:
+            key = next((d for r, d in getattr(f, "taint_uses", []) if r.contains(pos)), None)
+        if key is None or key not in decls:
+            return None
+        flow = getattr(f, "taint_flow", {})
+        into: dict = {}
+        for dst, srcs in flow.items():
+            for sr in srcs:
+                into.setdefault(sr, set()).add(dst)
+        seen, todo = [], [key]
+        while todo:
+            k = todo.pop()
+            if k in seen:
+                continue
+            seen.append(k)
+            todo += sorted(flow.get(k, ())) + sorted(into.get(k, ()))
+        seen.sort()
+        keep = set(seen)
+        ranges = [decls[k][1] for k in seen if k in decls]
+        uses = [r for r, d in getattr(f, "taint_uses", []) if d in keep]
+        ranges += uses
+        sinks = sorted({(h.start.line, h.start.col, h.end.line, h.end.col, c) for h, c in getattr(f, "taint_hits", [])
+                        if any(h.contains(u.start) for u in uses)})
+        return ranges, [decls[k][0] for k in seen if k in decls], sinks
+    return None
+
+
 def tainted_ranges(mod) -> list:
     """Every place in a module where a tainted local or parameter is declared or read (for the editor's `tainted` highlight)."""
     from .modsec import _decls
     out = []
     for _key, f, _emb in (_decls(mod.tree) if mod.tree is not None else ()):
         out += [r for _n, r, t in getattr(f, "taint_locals", []) if t is not None]
-        out += getattr(f, "taint_uses", [])
+        out += [r for r, _d in getattr(f, "taint_uses", [])]
     return out
 
 

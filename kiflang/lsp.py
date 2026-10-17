@@ -421,6 +421,10 @@ class Server:
         uri, pos = p["textDocument"]["uri"], lsp_pos(p["position"])
         _sym, hits = self._references(uri, pos)
         ranges = [r for u, r in hits if u == uri]
+        trail = taint.trail(self.module(uri), pos) if not ranges else None
+        if trail is not None:
+            sinks = [Range(Pos(a, b), Pos(c, d)) for a, b, c, d, _code in trail[2]]
+            return [{"range": lsp_range(r), "kind": 2} for r in trail[0]] + [{"range": lsp_range(r), "kind": 3} for r in sinks]
         if not ranges:
             toks, _ = lx.lex(self.docs[uri])
             tok = next((t for t in toks if t.kind == lx.IDENT and t.range.contains(pos)), None)
@@ -623,6 +627,12 @@ class Server:
             note = taint.describe_local(mod, lsp_pos(p["position"]), found[0][-1]) if len(found[0]) == 1 else None
             if note is None:
                 return None
+            trail = taint.trail(mod, lsp_pos(p["position"]))
+            if trail is not None:
+                if len(trail[1]) > 1:
+                    note += "\n\n**Flow trail** (highlighted in the editor): " + " → ".join(f"`{n}`" for n in trail[1])
+                if trail[2]:
+                    note += "\n\n**Reaches** " + ", ".join(f"`{c}` at line {a + 1}" for a, _b, _c, _d, c in trail[2])
             return {"contents": {"kind": "markdown", "value": note + "\n\n_Taint: docs/kif-taint.md_"}, "range": lsp_range(tokens[found[1]].range)}
         if sym is None or found is None:
             return None
